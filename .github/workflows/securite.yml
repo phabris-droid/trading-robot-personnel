@@ -1,0 +1,51 @@
+# Analyses de sécurité de GitHub, en complément de la CI :
+# - CodeQL (requêtes « security-extended ») sur le code Python et sur les workflows ;
+# - revue des dépendances ajoutées ou modifiées par une pull request ;
+# - passage hebdomadaire : une faille publiée après le dernier commit est quand même détectée.
+# Séparé de ci.yml car CodeQL doit écrire des alertes (security-events: write), droit que la CI
+# appelée par cd-prod.yml n'a pas.
+name: Sécurité
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, prod]
+  schedule:
+    - cron: "0 5 * * 1"           # lundi 5 h UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.langage }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        langage: [python, actions]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.langage }}
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /langage:${{ matrix.langage }}
+
+  dependances-pr:
+    name: Revue des dépendances de la pull request
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/dependency-review-action@v5.0.0
+        with:
+          fail-on-severity: moderate

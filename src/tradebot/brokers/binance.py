@@ -119,7 +119,7 @@ def parse_retry_after(value: str | None, now: float, default: float = 1.0,
         except ValueError:
             try:
                 seconds = parsedate_to_datetime(text).timestamp() - now
-            except (TypeError, ValueError, IndexError, OverflowError):
+            except (TypeError, ValueError, IndexError, OverflowError, OSError):
                 seconds = default
     if not math.isfinite(seconds):
         seconds = default

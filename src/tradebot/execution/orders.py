@@ -12,6 +12,7 @@ Le journal peut être indisponible : ses écritures sont alors gardées en mémo
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 
 from tradebot.brokers.base import BrokerError, OrderUncertain, StopNotPlaced
@@ -40,10 +41,9 @@ class UncertainReport:
 
 def _j(fn, *args, **kwargs) -> None:
     """Écriture journal : une panne de journal ne bloque jamais l'exécution."""
-    try:
+    # écritures gardées en mémoire par le journal et rejouées plus tard
+    with suppress(JournalUnavailable):
         fn(*args, **kwargs)
-    except JournalUnavailable:
-        pass
 
 
 def record_position(journal: Journal, platform: str, pos: dict, strategy: str = "") -> None:

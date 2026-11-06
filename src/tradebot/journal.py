@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -250,10 +251,8 @@ class Journal:
 
     def _drop_connection(self) -> None:
         if self._conn is not None:
-            try:
+            with suppress(sqlite3.Error):       # base peut-être déjà corrompue
                 self._conn.close()
-            except sqlite3.Error:
-                pass
             self._conn = None
 
     def close(self) -> None:
@@ -288,10 +287,8 @@ class Journal:
             conn.execute("COMMIT")
             return rejected
         except BaseException:
-            try:
+            with suppress(sqlite3.Error):       # transaction déjà annulée par SQLite
                 conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
             raise
 
     def _queue(self, ops: list[_Op]) -> None:

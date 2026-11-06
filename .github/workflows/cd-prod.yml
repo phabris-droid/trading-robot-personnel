@@ -40,6 +40,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write          # signature de l'attestation de provenance
+      attestations: write
     outputs:
       image: ${{ steps.nom.outputs.image }}
       digest: ${{ steps.push.outputs.digest }}
@@ -93,7 +95,14 @@ jobs:
           docker push "$IMG:prod"
           digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMG:${GITHUB_SHA}")
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "sha=${digest#*@}" >> "$GITHUB_OUTPUT"
           echo "Image publiée : \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+      - name: 5. Attestation de provenance signée (image <- ce dépôt, ce commit, ce pipeline)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.nom.outputs.image }}
+          subject-digest: ${{ steps.push.outputs.sha }}
+          push-to-registry: true
 
   deploy:
     name: Déploiement sur le VPS
@@ -154,7 +163,7 @@ jobs:
           printf 'mkdir -p %q\n' "$APP_DIR" | ssh "${OPTS[@]}" "$U@$H" "bash -s"
           scp "${OPTS[@]}" docker-compose.prod.yml "$U@$H:$APP_DIR/"
 
-      - name: Télécharger l'image et relancer le robot
+      - name: Télécharger l'image et relancer le robot (retour arrière si KO)
         if: steps.check.outputs.ok == 'true'
         env:
           H: ${{ secrets.VPS_HOST }}
@@ -164,52 +173,12 @@ jobs:
         run: |
           OPTS=(-i "$HOME/.ssh/id_deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
           # Variables et jeton GHCR passés par l'entrée standard (jamais dans une ligne de
-          # commande distante, visible dans la liste des processus du VPS)
+          # commande distante, visible dans la liste des processus du VPS) ; le script est
+          # deploy/deploy_remote.sh, répété à chaque CI (« Répétition du déploiement »)
           {
             printf 'APP_DIR=%q\nTRADEBOT_IMAGE=%q\nGHCR_USER=%q\nGHCR_TOKEN=%q\n' \
               "$APP_DIR" "$IMAGE_REF" "$GHCR_USER" "$GHCR_TOKEN"
-            cat <<'SCRIPT'
-          set -euo pipefail
-          cd "$APP_DIR"
-          test -f .env || { echo "ERREUR : $APP_DIR/.env absent sur le VPS"; exit 1; }
-          export TRADEBOT_IMAGE
-          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null
-          unset GHCR_TOKEN
-          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
-          COMPOSE="docker compose -f docker-compose.prod.yml"
-          # image en service avant la mise à jour : cible du retour en arrière
-          PREVIOUS=$(docker inspect --format '{{.Config.Image}}' tradebot 2>/dev/null || true)
-          wait_health() {
-            for _ in $(seq 1 30); do
-              curl -fsS http://127.0.0.1:8080/health >/dev/null && return 0
-              sleep 5
-            done
-            return 1
-          }
-          $COMPOSE pull
-          $COMPOSE up -d --remove-orphans
-          echo "Attente du contrôle de santé (moteur vivant)..."
-          if wait_health; then
-            echo "$TRADEBOT_IMAGE" > .deployed_image
-            echo "Robot en ligne : $TRADEBOT_IMAGE"
-            docker image prune -f >/dev/null
-            exit 0
-          fi
-          echo "ERREUR : /health ne répond pas après 150 s"
-          $COMPOSE logs --tail 80
-          if [ -n "$PREVIOUS" ] && [ "$PREVIOUS" != "$TRADEBOT_IMAGE" ]; then
-            echo "RETOUR EN ARRIÈRE vers $PREVIOUS"
-            TRADEBOT_IMAGE="$PREVIOUS" $COMPOSE up -d --remove-orphans
-            if wait_health; then
-              echo "Version précédente rétablie : $PREVIOUS"
-            else
-              echo "ERREUR CRITIQUE : la version précédente ne répond pas non plus"
-            fi
-          else
-            echo "Aucune version précédente connue : intervention manuelle nécessaire"
-          fi
-          exit 1
-          SCRIPT
+            cat deploy/deploy_remote.sh
           } | ssh "${OPTS[@]}" "$U@$H" "bash -s"
 
       - name: Nettoyer la clé

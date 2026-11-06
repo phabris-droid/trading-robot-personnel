@@ -1,16 +1,21 @@
-# Intégration continue — 4 étapes, chaque contrôle est un point distinct et bloquant.
+# Intégration continue — 5 étapes, chaque contrôle est un point distinct et bloquant.
 #
-#   1. Analyse statique (en parallèle)   hygiène, secrets, workflows, scripts, lint, typage,
-#                                        configuration, versions exactes, dépendances
-#   2. Tests (en parallèle par domaine)  stratégies & risque, plateformes, journal & config,
-#                                        moteur, interface -> couverture combinée + tests oubliés
-#   3. Conteneur (en parallèle)          build, démarrage, arrêt propre, durcissement, Trivy + SBOM
-#   4. Verdict                           tableau récapitulatif, échoue si un point a échoué
+#   1. Analyse statique (en parallèle)    hygiène, secrets, workflows, scripts, lint, typage,
+#                                         sécurité du code (règles bandit), configuration,
+#                                         versions exactes, dépendances vulnérables
+#   2. Tests (en parallèle)               6 domaines dont propriétés (hypothesis), tests isolés
+#                                         (sans réseau, ordre aléatoire), couverture + oubliés
+#   3. Conteneur (en parallèle)           build, démarrage, arrêt propre, durcissement,
+#                                         secrets & contrôle d'accès, Trivy + SBOM
+#   4. Préparation à la production        compose de prod + mode réel refusé, redémarrage
+#                                         avec données conservées, répétition du déploiement
+#                                         et du retour arrière
+#   5. Verdict                            tableau récapitulatif, échoue si un point a échoué
 #
 # - push sur dev               → CI
 # - pull request vers dev/prod → CI
 # - push sur prod              → CI appelée par cd-prod.yml avant le déploiement
-# Aucun test ne touche un vrai compte (réseau simulé par respx) — CLAUDE.md.
+# Aucun test ne touche un vrai compte (réseau simulé par respx, vérifié sans réseau).
 name: CI
 
 on:
@@ -160,6 +165,15 @@ jobs:
       - name: pip-audit (versions exactes)
         run: pip-audit --progress-spinner off --skip-editable
 
+  securite-code:
+    name: 1 · Sécurité du code (règles bandit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/python-env
+      - name: ruff --select S (injections, mots de passe en dur, exceptions muettes…)
+        run: ruff check --select S --output-format=github src
+
   # ════════════════════════ 2. TESTS ════════════════════════
 
   tests:
@@ -185,6 +199,9 @@ jobs:
           - domaine: interface & sécurité
             id: interface
             fichiers: tests/test_dashboard.py
+          - domaine: propriétés (hypothesis)
+            id: proprietes
+            fichiers: tests/test_properties.py
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/python-env
@@ -218,6 +235,28 @@ jobs:
             coverage-${{ matrix.id }}.dat
             junit-${{ matrix.id }}.xml
           retention-days: 7
+
+  tests-isoles:
+    name: 2 · Tests isolés (sans réseau, ordre aléatoire)
+    needs: [lint, typage, configuration, versions]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/python-env
+      - name: Outils d'isolation
+        run: python -m pip install "pytest-socket==0.8.1" "pytest-randomly==5.0.0"
+      - name: Suite complète sans accès réseau, dans un ordre aléatoire
+        run: |
+          set -o pipefail
+          # toute connexion réseau fait échouer le test : aucun test ne touche un vrai compte
+          # pytest-randomly (chargé automatiquement) mélange l'ordre : graine dans le résumé
+          python -m pytest -rfE --tb=short --disable-socket --allow-unix-socket \
+            2>&1 | tee pytest.log
+      - name: Résultat et graine visibles dans le résumé
+        if: always()
+        run: |
+          [ -f pytest.log ] || exit 0
+          echo "::notice title=tests isolés::$(grep -E 'passed|failed' pytest.log | tail -n 1) — $(grep -m1 -o "randomly-seed=[0-9]*" pytest.log || true)"
 
   couverture:
     name: 2 · Couverture combinée + tests oubliés
@@ -361,6 +400,61 @@ jobs:
             "$(i '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Type}}{{end}}{{end}}')" "volume"
           exit "$fail"
 
+  secrets-acces:
+    name: 3 · Secrets jamais journalisés + contrôle d'accès
+    needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: image
+      - name: Démarrage avec de faux secrets (plateformes rendues injoignables)
+        run: |
+          gunzip -c image.tar.gz | docker load
+          {
+            echo "BINANCE_API_KEY=CLE$(openssl rand -hex 20)"
+            echo "BINANCE_API_SECRET=SEC$(openssl rand -hex 24)"
+            echo "CAPITAL_PASSWORD=PWD$(openssl rand -hex 12)"
+            echo "TELEGRAM_BOT_TOKEN=TOK$(openssl rand -hex 16)"
+            echo "ANTHROPIC_API_KEY=ANT$(openssl rand -hex 16)"
+            echo "DASHBOARD_USER=admin"
+            echo "DASHBOARD_PASSWORD=MDP$(openssl rand -hex 12)"
+          } > /tmp/secrets.env
+          # aucune requête vers les vraies plateformes depuis la CI
+          mkdir -p /tmp/cfg && cp config/config.yaml /tmp/cfg/
+          sed -i 's#https://[a-z.-]*binance[a-z.-]*#https://binance.invalid#g; s#https://[a-z.-]*capital[a-z.-]*#https://capital.invalid#g' /tmp/cfg/config.yaml
+          docker run -d --name tradebot --env-file /tmp/secrets.env \
+            -v /tmp/cfg:/app/config:ro --read-only --tmpfs /tmp \
+            --tmpfs /app/data:uid=10001,gid=10001 -p 127.0.0.1:8080:8080 tradebot:local
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 3; done
+          sleep 5
+      - name: Contrôle d'accès du tableau de bord (CDC §8)
+        run: |
+          pw=$(grep '^DASHBOARD_PASSWORD=' /tmp/secrets.env | cut -d= -f2)
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          fail=0
+          expect() { if [ "$2" = "$3" ]; then echo "OK   $1 ($2)"; else echo "::error::$1 : $2 au lieu de $3"; fail=1; fi; }
+          expect "/health public" "$(code http://127.0.0.1:8080/health)" 200
+          expect "sans identifiants" "$(code http://127.0.0.1:8080/)" 401
+          expect "mauvais mot de passe" "$(code -u admin:faux http://127.0.0.1:8080/)" 401
+          expect "essai raté < 1 s après" "$(code -u admin:faux2 http://127.0.0.1:8080/)" 429
+          expect "bon mot de passe toujours accepté" "$(code -u "admin:$pw" http://127.0.0.1:8080/)" 200
+          expect "origine étrangère refusée" \
+            "$(code -X POST -u "admin:$pw" -H 'Origin: https://pirate.example' http://127.0.0.1:8080/api/status)" 403
+          exit "$fail"
+      - name: Aucun secret dans les journaux du conteneur ni dans le journal SQLite (CLAUDE.md règle 6)
+        run: |
+          docker logs tradebot > logs.txt 2>&1
+          docker exec tradebot python -c "from tradebot.journal import Journal; [print(e['message']) for e in Journal('data/tradebot_demo.db', 'demo').events(1000)]" >> logs.txt 2>&1
+          echo "--- extrait ---"; tail -n 15 logs.txt
+          fail=0
+          while IFS='=' read -r cle valeur; do
+            [ "$cle" = "DASHBOARD_USER" ] && continue
+            if grep -qF "$valeur" logs.txt; then echo "::error::$cle apparaît dans les journaux"; fail=1; fi
+          done < /tmp/secrets.env
+          exit "$fail"
+
   analyse-image:
     name: 3 · Vulnérabilités de l'image (Trivy) + SBOM
     needs: image
@@ -387,14 +481,114 @@ jobs:
           path: sbom.cdx.json
           retention-days: 30
 
-  # ════════════════════════ 4. VERDICT ════════════════════════
+  # ════════════════════════ 4. PRÉPARATION À LA PRODUCTION ════════════════════════
+
+  prod-config:
+    name: 4 · Compose de production + mode réel refusé
+    needs: [demarrage, durcissement]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: image
+      - name: docker-compose.prod.yml exige un .env
+        run: |
+          gunzip -c image.tar.gz | docker load
+          dir=$(mktemp -d) && cp docker-compose.prod.yml "$dir/"
+          if docker compose -f "$dir/docker-compose.prod.yml" config -q 2>/dev/null; then
+            echo "::error::la configuration de prod démarre sans .env"; exit 1
+          fi
+          echo "OK   .env obligatoire en production"
+      - name: Démarrage avec la configuration de production
+        run: |
+          dir=$(mktemp -d) && cp docker-compose.prod.yml "$dir/"
+          printf 'DASHBOARD_USER=admin\nDASHBOARD_PASSWORD=%s\n' "$(openssl rand -hex 12)" > "$dir/.env"
+          TRADEBOT_IMAGE=tradebot:local docker compose -f "$dir/docker-compose.prod.yml" up -d
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && exit 0; sleep 3; done
+          docker logs tradebot --tail 50; exit 1
+      - name: Journaux Docker limités (10 Mo × 5)
+        run: |
+          test "$(docker inspect -f '{{.HostConfig.LogConfig.Config}}' tradebot)" = "map[max-file:5 max-size:10m]"
+      - name: Mode réel refusé dans le conteneur sans confirmation ni mot de passe solide
+        run: |
+          mkdir -p /tmp/live && cp config/config.yaml /tmp/live/
+          sed -i 's/^mode: demo/mode: live/' /tmp/live/config.yaml
+          grep -q '^mode: live' /tmp/live/config.yaml
+          for env in "" "-e CONFIRM_LIVE_TRADING=OUI -e DASHBOARD_PASSWORD=court"; do
+            # shellcheck disable=SC2086
+            rc=0; docker run --rm $env -v /tmp/live:/app/config:ro tradebot:local > out.txt 2>&1 || rc=$?
+            cat out.txt
+            test "$rc" = "2" || { echo "::error::le mode réel aurait dû être refusé (code $rc)"; exit 1; }
+            grep -q "Démarrage refusé" out.txt
+          done
+
+  redemarrage:
+    name: 4 · Redémarrage (données conservées, CDC §10 J4)
+    needs: [demarrage, arret]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: image
+      - name: Démarrage
+        run: |
+          gunzip -c image.tar.gz | docker load
+          docker compose up -d --no-build
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 3; done
+      - name: Journal relu avant et après « docker compose restart »
+        run: |
+          compte() {
+            docker compose exec -T tradebot python -c \
+              "from tradebot.journal import Journal; j = Journal('data/tradebot_demo.db', 'demo'); print(len(j.events(100000)))"
+          }
+          avant=$(compte); echo "événements avant : $avant"
+          test "$avant" -ge 1
+          docker compose restart
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 3; done
+          apres=$(compte); echo "événements après : $apres"
+          test "$apres" -ge "$avant" || { echo "::error::données perdues au redémarrage"; exit 1; }
+          test "$(docker inspect -f '{{.RestartCount}}' tradebot)" = "0"
+
+  repetition-deploiement:
+    name: 4 · Répétition du déploiement + retour arrière
+    needs: [demarrage, scripts]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: image
+      - name: Préparer une bonne image et une image cassée (moteur qui ne démarre pas)
+        run: |
+          gunzip -c image.tar.gz | docker load
+          docker tag tradebot:local tradebot:bonne
+          printf 'FROM tradebot:local\nCMD ["sleep", "infinity"]\n' | docker build -q -t tradebot:cassee -
+          dir=$(mktemp -d) && cp docker-compose.prod.yml "$dir/" && touch "$dir/.env"
+          echo "APP_DIR=$dir" >> "$GITHUB_ENV"
+      - name: Déploiement de la bonne image (deploy/deploy_remote.sh)
+        run: TRADEBOT_IMAGE=tradebot:bonne HEALTH_DELAY=3 bash deploy/deploy_remote.sh
+      - name: Déploiement d'une image cassée -> échec ET retour automatique
+        run: |
+          if TRADEBOT_IMAGE=tradebot:cassee HEALTH_TRIES=8 HEALTH_DELAY=3 bash deploy/deploy_remote.sh; then
+            echo "::error::le déploiement d'une image cassée aurait dû échouer"; exit 1
+          fi
+          image=$(docker inspect -f '{{.Config.Image}}' tradebot)
+          test "$image" = "tradebot:bonne" || { echo "::error::image en service : $image"; exit 1; }
+          curl -fsS http://127.0.0.1:8080/health
+          test "$(cat "$APP_DIR/.deployed_image")" = "tradebot:bonne"
+          echo; echo "OK   retour automatique à la version précédente"
+
+  # ════════════════════════ 5. VERDICT ════════════════════════
 
   verdict:
-    name: 4 · Verdict
+    name: 5 · Verdict
     if: always()
-    needs: [hygiene, secrets, workflows, scripts, lint, typage, configuration, versions,
-            dependances, tests, couverture, image, demarrage, arret, durcissement,
-            analyse-image]
+    needs: [hygiene, secrets, workflows, scripts, lint, typage, securite-code, configuration,
+            versions, dependances, tests, tests-isoles, couverture, image, demarrage, arret,
+            durcissement, secrets-acces, analyse-image, prod-config, redemarrage,
+            repetition-deploiement]
     runs-on: ubuntu-24.04
     steps:
       - name: Tableau récapitulatif

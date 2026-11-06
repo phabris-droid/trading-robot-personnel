@@ -83,13 +83,19 @@ dev (travail, tests, démo) ──mise en ligne──▶ prod ──▶ CI ─�
 | `dev`   | travail et tests | `CI` (ci-dessous), à chaque push |
 | `prod`  | ce qui est en ligne — **vide tant qu'aucune mise en ligne n'est décidée** | `CD prod` : CI → image construite une fois, démarrée et analysée → publiée par empreinte → VPS → `/health`, retour arrière automatique si KO |
 
-### Ce que vérifie la CI (tout est bloquant)
+### Ce que vérifie la CI (5 étapes, tout est bloquant)
 
-| Job | Contrôles |
+| Étape | Points |
 |---|---|
-| Garde-fous | aucun `.env` ni base SQLite versionné ; **gitleaks** sur tout l'historique ; **actionlint** (workflows + shellcheck des scripts intégrés) ; **bash -n + shellcheck** sur `deploy/*.sh` |
-| Lint + typage + tests | installation depuis les **versions exactes** (`requirements*.lock`) et contrôle de leur cohérence avec `pyproject.toml` ; **ruff** ; **mypy** ; **pytest** avec **couverture ≥ 85 %** ; **pip-audit** (dépendances vulnérables) |
-| Docker | build ; démarrage sans `.env` ; `/health` = **moteur vivant** (dernier cycle < 5 min) ; pas de redémarrage en boucle ; **Trivy** (vulnérabilités HIGH/CRITICAL corrigeables) |
+| **1 · Analyse statique** | hygiène du dépôt (`.env`, bases, gros fichiers, `.env.example`) · secrets (**gitleaks**, tout l'historique) · workflows (**actionlint**) · scripts shell (`bash -n`, **shellcheck**) · lint (**ruff**) · typage (**mypy**) · sécurité du code (**règles bandit**) · configuration du robot (`config.yaml` valide, mode réel refusé sans confirmation) · cohérence des **versions exactes** · dépendances vulnérables (**pip-audit**) |
+| **2 · Tests** | 6 domaines en parallèle : stratégies & risque, plateformes & exécution, journal & configuration, moteur (intégration, pannes), interface & sécurité, **propriétés (hypothesis)** · **tests isolés** : suite complète sans aucun accès réseau et dans un ordre aléatoire · couverture combinée **≥ 85 %** et contrôle qu'aucun test n'est oublié |
+| **3 · Conteneur** | build (une image partagée) · démarrage sans `.env` (`/health` = moteur vivant) · **arrêt propre sur SIGTERM** · **durcissement vérifié** (uid 10001, lecture seule, capacités retirées, 1 Go, port 127.0.0.1) · **faux secrets jamais journalisés** + contrôle d'accès du tableau de bord · **Trivy** + inventaire **SBOM** |
+| **4 · Préparation à la production** | compose de production (`.env` obligatoire, journaux limités) et **mode réel refusé dans le conteneur** · **redémarrage** avec données conservées · **répétition du déploiement** avec une image cassée → **retour automatique** à la version précédente |
+| **5 · Verdict** | tableau récapitulatif de tous les points |
+
+En plus : workflow **Sécurité** (CodeQL sur le Python et les workflows, revue des dépendances
+des pull requests, passage chaque lundi) et, à la mise en ligne, **attestation de provenance
+signée** de l'image publiée.
 
 Le nombre de tests et la couverture sont affichés dans le résumé de chaque exécution.
 
