@@ -62,7 +62,8 @@ def sleeps():
 @pytest.fixture
 def bn(sleeps):
     return BinanceSpot("cle", SECRET, f"https://{DEMO}", f"https://{LIVE}", 0.5,
-                       client=httpx.Client(), sleep=sleeps.append, clock=lambda: NOW)
+                       client=httpx.Client(), sleep=sleeps.append, clock=lambda: NOW,
+                       symbols=["BTCUSDT"])
 
 
 def _params(call):
