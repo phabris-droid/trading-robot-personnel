@@ -133,7 +133,18 @@ L'ordre des prompts est bon ; je propose d'avancer deux corrections et le backte
 12. **Étape 10** — Scripts VPS (shellcheck, jamais exécutés).
 13. **Étape 11** — Audits finaux.
 
-## 5. Git
+## 5. Suivi
+
+**Étape 0 bis — faite** : 2.3 (toutes les sections de `config.yaml` ont un modèle strict et borné),
+2.4 (test d'anticipation réel : bougies futures brouillées, valeurs passées inchangées),
+2.6 (paramètres ajoutés : `engine`, flux RSS, fenêtre forex, délai IA), 2.7, 2.8, 2.9
+(`strategies.params(name)` + `strategies.atr_period` passé aux stratégies).
+
+**Décisions** : A1 tranchée par l'étape 4 de `PROMPTS_CLAUDE_CODE.md` (marge pour Capital.com,
+valeur pour Binance). A2 à A11 restent ouvertes ; elles seront nécessaires à l'étape 4 (A2–A4),
+à l'étape 7 (A5, A6, A9, A11) et aux sorties anticipées (A7).
+
+## 6. Git
 
 Dépôt initialisé : `main` vide (commit initial GitHub), travail sur `dev`, mise en ligne par `prod`.
 `.gitignore` exclut `.env`, `.env.*` (sauf `.env.example`), `data/*.db`, `data/*.db-*`, `data/backups/*`.

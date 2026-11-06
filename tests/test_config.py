@@ -1,7 +1,10 @@
+"""Garde-fous de configuration (CDC §3 et §4, CLAUDE.md règle 10) : toute valeur absurde,
+faute de frappe, texte à la place d'un nombre ou paramètre inconnu bloque le démarrage."""
 from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from tradebot.settings import ConfigError, load_settings
 
@@ -17,23 +20,102 @@ def _write(tmp_path, mutate):
 
 
 def test_default_config_is_valid():
-    assert load_settings(CFG).mode == "demo"
+    s = load_settings(CFG)
+    assert s.mode == "demo"
+    assert s.db_path == "data/tradebot_demo.db"
+    assert s.strategies.params("trend_ema")["ema_fast"] == 20
+    assert s.engine.reconcile_every_cycles == 10
 
 
-@pytest.mark.parametrize("mutate", [
-    lambda r: r["risk"].update(risk_per_trade_pct=10),
-    lambda r: r["risk"].update(max_drawdown_pct="quinze"),
-    lambda r: r["risk"].update(risk_per_trad_pct=1),
-    lambda r: r["markets"][0].update(sides=["buy", "sell"]),
-])
+def _set(section_path, key, value):
+    def mutate(raw):
+        node = raw
+        for part in section_path:
+            node = node[part]
+        node[key] = value
+    return mutate
+
+
+def _drop(section_path, key):
+    def mutate(raw):
+        node = raw
+        for part in section_path:
+            node = node[part]
+        del node[key]
+    return mutate
+
+
+BAD = {
+    # risque (§4)
+    "risque > 5 %": _set(["risk"], "risk_per_trade_pct", 10),
+    "texte au lieu d'un nombre": _set(["risk"], "max_drawdown_pct", "quinze"),
+    "faute de frappe risque": _set(["risk"], "risk_per_trad_pct", 1),
+    "petit compte < risque normal": _set(["risk"], "small_account_max_risk_pct", 0.5),
+    "forex > positions max": _set(["risk"], "max_forex_positions", 5),
+    # marchés (§2–3)
+    "vente sur Binance spot": lambda r: r["markets"][0].update(sides=["buy", "sell"]),
+    "marché en double": lambda r: r["markets"].append({**r["markets"][0]}),
+    "symbole invalide": lambda r: r["markets"][0].update(symbol="btc/usdt"),
+    "stratégie inconnue": lambda r: r["markets"][0].update(strategy="martingale"),
+    "aucun marché": lambda r: r.update(markets=[]),
+    "unité de temps < 1 h": lambda r: r.update(timeframe="15m"),
+    # stratégies (§3)
+    "faute de frappe stratégie": _set(["strategies", "trend_ema"], "ema_fats", 20),
+    "paramètre de stratégie manquant": _drop(["strategies", "breakout"], "stop_atr"),
+    "EMA rapide ≥ lente": _set(["strategies", "trend_ema"], "ema_fast", 60),
+    "stop négatif": _set(["strategies", "mean_reversion"], "stop_atr", -1),
+    "rsi_exit ≤ rsi_entry": _set(["strategies", "mean_reversion"], "rsi_exit", 20),
+    "atr_period absurde": _set(["strategies"], "atr_period", 0),
+    # analystes (§5, §8)
+    "flux RSS > 2 Mo": _set(["analysts", "news_watch"], "feed_max_bytes", 10_000_000),
+    "délai flux > 20 s": _set(["analysts", "news_watch"], "feed_timeout_s", 60),
+    "flux non HTTPS": _set(["analysts", "news_watch"], "feeds", ["http://exemple.com/rss"]),
+    "confiance IA trop basse": _set(["analysts", "ai"], "min_reject_confidence", 0.1),
+    "modèle IA invalide": _set(["analysts", "ai"], "model", "gpt-4"),
+    "faute de frappe analyste": _set(["analysts", "risk"], "max_open_risk", 5),
+    "horaire forex invalide": _set(["analysts", "risk"], "forex_weekend_start_utc", "vendredi"),
+    # moteur, rapports, tableau de bord, stockage
+    "réconciliation 0 cycle": _set(["engine"], "reconcile_every_cycles", 0),
+    "section moteur manquante": lambda r: r.pop("engine"),
+    "heure de rapport invalide": _set(["reports"], "morning_utc", "25:00"),
+    "jour d'audit invalide": _set(["reports"], "audit_day", "dimanche"),
+    "port privilégié": _set(["dashboard"], "port", 80),
+    "base hors de data/": _set(["storage"], "demo_db", "/tmp/demo.db"),
+    "remontée de dossier": _set(["storage"], "live_db", "data/../secret.db"),
+    "journaux démo et réel confondus": _set(["storage"], "live_db", "data/tradebot_demo.db"),
+    "URL Binance non HTTPS": _set(["platforms", "binance"], "trading_url_live",
+                                  "http://api.binance.com"),
+    "ping Capital trop rare": _set(["platforms", "capital"], "keepalive_minutes", 15),
+    "section inconnue": lambda r: r.update(levier=10),
+}
+
+
+@pytest.mark.parametrize("mutate", list(BAD.values()), ids=list(BAD))
 def test_bad_config_blocks_start(tmp_path, mutate):
     with pytest.raises(ConfigError):
         load_settings(_write(tmp_path, mutate))
+
+
+def test_error_message_is_french_and_precise(tmp_path):
+    p = _write(tmp_path, _set(["strategies", "trend_ema"], "ema_fats", 20))
+    with pytest.raises(ConfigError) as exc:
+        load_settings(p)
+    msg = str(exc.value)
+    assert "configuration invalide" in msg
+    assert "strategies.trend_ema.ema_fats : paramètre inconnu" in msg
+
+
+def test_settings_are_read_only():
+    s = load_settings(CFG)
+    with pytest.raises(ValidationError):
+        s.risk.risk_per_trade_pct = 5
 
 
 def test_live_requires_confirmation(tmp_path):
     p = _write(tmp_path, lambda r: r.update(mode="live"))
     with pytest.raises(ConfigError):
         load_settings(p, env={"DASHBOARD_PASSWORD": "x" * 12})
-    assert load_settings(p, env={"CONFIRM_LIVE_TRADING": "OUI",
-                                 "DASHBOARD_PASSWORD": "x" * 12}).mode == "live"
+    with pytest.raises(ConfigError):
+        load_settings(p, env={"CONFIRM_LIVE_TRADING": "OUI", "DASHBOARD_PASSWORD": "court"})
+    s = load_settings(p, env={"CONFIRM_LIVE_TRADING": "OUI", "DASHBOARD_PASSWORD": "x" * 12})
+    assert s.mode == "live" and s.db_path == "data/tradebot_live.db"

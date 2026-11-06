@@ -12,7 +12,7 @@ def mean_reversion(df: pd.DataFrame, p: dict, sides: list[str], atr_n: int = 14)
     c = df["close"]
     low, mid, high = bollinger(c, p["bb_period"], p["bb_std"])
     r, a, x = rsi(c, p["rsi_period"]).iloc[-1], atr(df, atr_n).iloc[-1], adx(df, atr_n).iloc[-1]
-    if pd.isna(mid.iloc[-1]) or pd.isna(a) or pd.isna(x) or x >= p["adx_max"]:
+    if pd.isna(mid.iloc[-1]) or pd.isna(r) or pd.isna(a) or pd.isna(x) or x >= p["adx_max"]:
         return None
     price = c.iloc[-1]
     if "buy" in sides and r < p["rsi_entry"] and price < low.iloc[-1]:

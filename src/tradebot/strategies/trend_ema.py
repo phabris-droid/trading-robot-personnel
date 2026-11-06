@@ -11,7 +11,7 @@ def trend_ema(df: pd.DataFrame, p: dict, sides: list[str], atr_n: int = 14) -> S
     c = df["close"]
     fast, slow, filt = ema(c, p["ema_fast"]), ema(c, p["ema_slow"]), ema(c, p["ema_filter"])
     a, x = atr(df, atr_n).iloc[-1], adx(df, atr_n).iloc[-1]
-    if pd.isna(filt.iloc[-1]) or pd.isna(a) or x <= p["adx_min"]:
+    if len(c) < 2 or pd.isna(filt.iloc[-1]) or pd.isna(a) or pd.isna(x) or x <= p["adx_min"]:
         return None
     price = c.iloc[-1]
     crossed_up = fast.iloc[-2] <= slow.iloc[-2] and fast.iloc[-1] > slow.iloc[-1]

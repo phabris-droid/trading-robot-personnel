@@ -32,7 +32,7 @@ def main() -> int:
         return 2
     from tradebot.engine import Engine
 
-    _start_dashboard(int(settings.dashboard.get("port", 8080)))
+    _start_dashboard(settings.dashboard.port)
     print(f"Robot démarré en mode {settings.mode.upper()}", flush=True)
     Engine(settings).run()
     print("Robot arrêté proprement", flush=True)
