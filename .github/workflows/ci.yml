@@ -1,5 +1,12 @@
-# Intégration continue : garde-fous, lint, typage, tests + couverture, audit des dépendances,
-# puis démarrage réel du conteneur et analyse de l'image. Tous les contrôles sont bloquants.
+# Intégration continue — 4 étapes, chaque contrôle est un point distinct et bloquant.
+#
+#   1. Analyse statique (en parallèle)   hygiène, secrets, workflows, scripts, lint, typage,
+#                                        configuration, versions exactes, dépendances
+#   2. Tests (en parallèle par domaine)  stratégies & risque, plateformes, journal & config,
+#                                        moteur, interface -> couverture combinée + tests oubliés
+#   3. Conteneur (en parallèle)          build, démarrage, arrêt propre, durcissement, Trivy + SBOM
+#   4. Verdict                           tableau récapitulatif, échoue si un point a échoué
+#
 # - push sur dev               → CI
 # - pull request vers dev/prod → CI
 # - push sur prod              → CI appelée par cd-prod.yml avant le déploiement
@@ -21,53 +28,118 @@ env:
   GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1
   ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12
   TRIVY_IMAGE: aquasec/trivy:0.76.2
-  UV_VERSION: "0.13.7"
   COVERAGE_MIN: "85"            # couverture mesurée : 89 % (novembre 2026)
 
 jobs:
-  garde-fous:
-    name: Garde-fous (secrets, workflows, scripts)
+  # ════════════════════════ 1. ANALYSE STATIQUE ════════════════════════
+
+  hygiene:
+    name: 1 · Hygiène du dépôt
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0              # gitleaks analyse tout l'historique
       - name: Aucun .env ni base SQLite versionné
         run: |
           interdits=$(git ls-files | grep -E '(^|/)\.env(\..+)?$|\.db$|\.db-(wal|shm)$' \
                       | grep -vE '(^|/)\.env\.example$' || true)
           if [ -n "$interdits" ]; then
-            echo "::error::Fichiers interdits dans le dépôt : $interdits"
-            exit 1
+            echo "::error::Fichiers interdits dans le dépôt : $interdits"; exit 1
           fi
-      - name: Secrets dans le code et tout l'historique (gitleaks)
+      - name: Aucun fichier volumineux (> 1 Mo)
+        run: |
+          gros=$(git ls-files -z | xargs -0 -r du -k | awk '$1 > 1024 {print $2}')
+          if [ -n "$gros" ]; then echo "::error::Fichiers > 1 Mo : $gros"; exit 1; fi
+      - name: .env.example sans valeur secrète
+        run: |
+          if grep -E '^(BINANCE_API_(KEY|SECRET)|CAPITAL_(API_KEY|PASSWORD)|TELEGRAM_BOT_TOKEN|ANTHROPIC_API_KEY|DASHBOARD_PASSWORD)=.+' .env.example; then
+            echo "::error::.env.example contient une valeur secrète"; exit 1
+          fi
+
+  secrets:
+    name: 1 · Secrets (gitleaks, tout l'historique)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: gitleaks
         run: |
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
             git /repo --config /repo/.gitleaks.toml --no-banner --redact -v
-      - name: Workflows GitHub (actionlint + shellcheck des scripts intégrés)
-        run: docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -color
-      - name: Scripts shell (bash -n + shellcheck)
-        run: |
-          for f in deploy/*.sh; do bash -n "$f"; done
-          shellcheck deploy/*.sh
 
-  tests:
-    name: Lint + typage + tests (Python 3.12)
+  workflows:
+    name: 1 · Workflows GitHub (actionlint)
     runs-on: ubuntu-24.04
-    needs: garde-fous
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements-dev.lock
-      - name: Installation depuis les versions exactes
+      - name: actionlint + shellcheck des scripts intégrés
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -color
+
+  scripts:
+    name: 1 · Scripts shell (bash -n, shellcheck)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Syntaxe (bash -n)
+        run: for f in deploy/*.sh; do bash -n "$f"; done
+      - name: shellcheck
+        run: shellcheck deploy/*.sh
+
+  lint:
+    name: 1 · Lint (ruff)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/python-env
+      - name: ruff
+        run: ruff check --output-format=github src tests scripts
+
+  typage:
+    name: 1 · Typage (mypy)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/python-env
+      - name: mypy
+        run: mypy src
+
+  configuration:
+    name: 1 · Configuration du robot
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/python-env
+      - name: config.yaml valide, garde-fous du mode réel actifs
         run: |
-          python -m pip install -r requirements-dev.lock
-          python -m pip install --no-deps -e .
-          python -m pip install "pytest-cov==7.1.0" "pip-audit==2.10.1" "uv==$UV_VERSION"
-      - name: Versions exactes cohérentes avec pyproject.toml
+          python - <<'PY'
+          import pathlib, tempfile, yaml
+          from tradebot.settings import ConfigError, load_settings
+
+          s = load_settings("config/config.yaml", env={})
+          actifs = [f"{m.platform}:{m.symbol}:{m.strategy}" for m in s.markets if m.enabled]
+          print(f"mode={s.mode}  marchés actifs={actifs}")
+          if s.mode != "demo":
+              print("::warning::config.yaml versionnée en mode RÉEL")
+          raw = yaml.safe_load(pathlib.Path("config/config.yaml").read_text(encoding="utf-8"))
+          raw["mode"] = "live"
+          p = pathlib.Path(tempfile.mkdtemp()) / "live.yaml"
+          p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+          for env in ({}, {"CONFIRM_LIVE_TRADING": "OUI", "DASHBOARD_PASSWORD": "court"}):
+              try:
+                  load_settings(p, env=env)
+              except ConfigError:
+                  continue
+              raise SystemExit(f"le mode réel devrait être refusé avec {sorted(env)}")
+          print("mode réel refusé sans CONFIRM_LIVE_TRADING=OUI et mot de passe ≥ 12 : OK")
+          PY
+
+  versions:
+    name: 1 · Versions exactes (cohérence)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/python-env
+      - name: requirements*.lock cohérents avec pyproject.toml
         run: |
           for spec in "requirements.lock|" "requirements-dev.lock|--extra=dev"; do
             lock="${spec%%|*}"; extra="${spec##*|}"
@@ -75,52 +147,149 @@ jobs:
             uv pip compile pyproject.toml ${extra:+"$extra"} --python-version 3.12 \
               --python-platform x86_64-unknown-linux-gnu --no-header --quiet -o "/tmp/$lock"
             if ! diff <(grep -v '^#' "$lock") <(grep -v '^#' "/tmp/$lock"); then
-              echo "::error::$lock n'est plus cohérent avec pyproject.toml : le régénérer (uv pip compile)"
-              exit 1
+              echo "::error::$lock n'est plus cohérent avec pyproject.toml : le régénérer"; exit 1
             fi
           done
-      - name: Lint (ruff)
-        run: ruff check --output-format=github src tests scripts
-      - name: Typage (mypy)
-        run: mypy src
-      - name: Tests (pytest + couverture minimale)
+
+  dependances:
+    name: 1 · Dépendances vulnérables (pip-audit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/python-env
+      - name: pip-audit (versions exactes)
+        run: pip-audit --progress-spinner off --skip-editable
+
+  # ════════════════════════ 2. TESTS ════════════════════════
+
+  tests:
+    name: 2 · Tests ${{ matrix.domaine }}
+    needs: [lint, typage, configuration, versions]
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - domaine: stratégies & risque
+            id: strategies
+            fichiers: tests/test_strategies_no_lookahead.py tests/test_risk.py
+          - domaine: plateformes & exécution
+            id: plateformes
+            fichiers: tests/test_binance.py tests/test_execution.py
+          - domaine: journal & configuration
+            id: journal
+            fichiers: tests/test_journal.py tests/test_config.py
+          - domaine: moteur (intégration, pannes)
+            id: moteur
+            fichiers: tests/test_engine.py tests/test_engine_integration.py
+          - domaine: interface & sécurité
+            id: interface
+            fichiers: tests/test_dashboard.py
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/python-env
+      - name: pytest
+        env:
+          COVERAGE_FILE: coverage-${{ matrix.id }}.dat
+          FICHIERS: ${{ matrix.fichiers }}
         run: |
           set -o pipefail
-          python -m pytest -q -rfE --tb=short --cov=tradebot --cov-report=term \
-            --cov-fail-under="$COVERAGE_MIN" 2>&1 | tee pytest.log
-      - name: Nombre de tests et couverture visibles dans le résumé
+          # liste de fichiers volontairement découpée en arguments
+          # shellcheck disable=SC2086
+          python -m pytest -q -rfE --tb=short --cov=tradebot --cov-report= \
+            --junitxml="junit-${{ matrix.id }}.xml" $FICHIERS 2>&1 | tee pytest.log
+      - name: Résultat visible dans le résumé
         if: always()
         run: |
           [ -f pytest.log ] || exit 0
-          echo "::notice title=pytest::$(grep -E 'passed|failed' pytest.log | tail -n 1)"
-          echo "::notice title=couverture::$(grep -E '^TOTAL' pytest.log || echo inconnue)"
-      - name: Échecs pytest visibles dans le résumé
+          echo "::notice title=${{ matrix.domaine }}::$(grep -E 'passed|failed' pytest.log | tail -n 1)"
+      - name: Échecs visibles dans le résumé
         if: failure()
         run: |
           [ -f pytest.log ] || exit 0
-          msg=$(grep -E '^(FAILED|ERROR) |^E  |^[^ ]+\.py:[0-9]+: |Required test coverage' \
-                pytest.log | head -80 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
-          echo "::error title=pytest::${msg:-voir le journal du job}"
-      - name: Dépendances vulnérables (pip-audit)
-        run: pip-audit --progress-spinner off --skip-editable
+          msg=$(grep -E '^(FAILED|ERROR) |^E  |^[^ ]+\.py:[0-9]+: ' pytest.log | head -80 \
+                | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::error title=${{ matrix.domaine }}::${msg:-voir le journal du job}"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: tests-${{ matrix.id }}
+          path: |
+            coverage-${{ matrix.id }}.dat
+            junit-${{ matrix.id }}.xml
+          retention-days: 7
 
-  docker:
-    name: Docker (build, démarrage sans .env, analyse)
-    runs-on: ubuntu-24.04
+  couverture:
+    name: 2 · Couverture combinée + tests oubliés
     needs: tests
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
-      - name: Compose valide
+      - uses: ./.github/actions/python-env
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: tests-*
+          merge-multiple: true
+      - name: Aucun fichier de test oublié par les domaines
+        run: |
+          python - <<'PY'
+          import glob, subprocess, xml.etree.ElementTree as ET
+          ran = 0
+          for f in glob.glob("junit-*.xml"):
+              root = ET.parse(f).getroot()
+              suites = [root] if root.tag == "testsuite" else list(root)
+              ran += sum(int(s.get("tests", 0)) for s in suites)
+          out = subprocess.run(["python", "-m", "pytest", "--collect-only", "-q"],
+                               capture_output=True, text=True).stdout
+          total = sum(1 for line in out.splitlines() if "::" in line)
+          print(f"tests exécutés par les domaines : {ran} / tests du dépôt : {total}")
+          if ran != total:
+              raise SystemExit(f"::error::{total - ran} test(s) ne sont rattachés à aucun domaine")
+          PY
+      - name: Couverture ≥ ${{ env.COVERAGE_MIN }} %
+        run: |
+          coverage combine coverage-*.dat
+          coverage report --fail-under="$COVERAGE_MIN" | tee couverture.txt
+          echo "::notice title=couverture::$(grep -E '^TOTAL' couverture.txt)"
+
+  # ════════════════════════ 3. CONTENEUR ════════════════════════
+
+  image:
+    name: 3 · Build de l'image
+    needs: [hygiene, secrets]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: docker-compose valides (local et prod)
         run: |
           docker compose config -q
-          # prod exige un .env : on valide avec un .env vide dans un dossier temporaire
           tmp=$(mktemp -d) && cp docker-compose.prod.yml "$tmp/" && touch "$tmp/.env"
           docker compose -f "$tmp/docker-compose.prod.yml" config -q
-      - name: Build et démarrage comme un nouvel utilisateur (aucun .env)
+      - name: Build
+        run: docker compose build
+      - name: Image partagée avec les points suivants
+        run: docker save tradebot:local | gzip -1 > image.tar.gz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image
+          path: image.tar.gz
+          retention-days: 1
+
+  demarrage:
+    name: 3 · Démarrage sans .env (/health = moteur vivant)
+    needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: image
+      - name: Démarrage comme un nouvel utilisateur
         run: |
+          gunzip -c image.tar.gz | docker load
           test ! -f .env
-          docker compose up -d --build
-      - name: Le tableau de bord répond (/health = moteur vivant) et le conteneur est sain
+          docker compose up -d --no-build
+      - name: Conteneur sain et moteur vivant
         run: |
           for i in $(seq 1 30); do
             etat=$(docker inspect -f '{{.State.Health.Status}}' tradebot 2>/dev/null || echo absent)
@@ -129,18 +298,116 @@ jobs:
             fi
             echo "tentative $i : $etat"; sleep 5
           done
-          echo "::error::Le conteneur ne devient pas sain"
-          docker compose logs --tail 100
-          exit 1
-      - name: Le conteneur ne redémarre pas en boucle
+          echo "::error::Le conteneur ne devient pas sain"; docker compose logs --tail 100; exit 1
+      - name: Pas de redémarrage en boucle, mode démo annoncé
         run: |
           test "$(docker inspect -f '{{.RestartCount}}' tradebot)" = "0"
+          docker compose logs | grep -q "Robot démarré en mode DEMO"
+      - name: Tableau de bord fermé sans mot de passe
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)
+          test "$code" = "503" || { echo "::error::/ répond $code au lieu de 503"; exit 1; }
+
+  arret:
+    name: 3 · Arrêt propre (SIGTERM)
+    needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: image
+      - name: Démarrage
+        run: |
+          gunzip -c image.tar.gz | docker load
+          docker compose up -d --no-build
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 3; done
+      - name: SIGTERM -> cycle terminé, sortie propre (code 0)
+        run: |
+          docker compose stop
+          code=$(docker inspect -f '{{.State.ExitCode}}' tradebot)
           docker compose logs --tail 20
-      - name: Analyse de l'image (Trivy, HIGH/CRITICAL corrigeables)
+          test "$code" = "0" || { echo "::error::code de sortie $code"; exit 1; }
+          docker compose logs | grep -q "Robot arrêté proprement"
+
+  durcissement:
+    name: 3 · Durcissement du conteneur (CDC §8)
+    needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: image
+      - name: Démarrage
+        run: |
+          gunzip -c image.tar.gz | docker load
+          docker compose up -d --no-build
+      - name: Non-root, lecture seule, aucun privilège, mémoire limitée, port local
+        run: |
+          i() { docker inspect -f "$1" tradebot; }
+          fail=0
+          check() { if [ "$2" = "$3" ]; then echo "OK   $1"; else echo "::error::$1 : '$2' au lieu de '$3'"; fail=1; fi; }
+          check "utilisateur non-root (uid 10001)" "$(i '{{.Config.User}}')" "10001"
+          check "système de fichiers en lecture seule" "$(i '{{.HostConfig.ReadonlyRootfs}}')" "true"
+          check "toutes les capacités retirées" "$(i '{{json .HostConfig.CapDrop}}')" '["ALL"]'
+          check "no-new-privileges" "$(i '{{json .HostConfig.SecurityOpt}}')" '["no-new-privileges:true"]'
+          check "mémoire limitée à 1 Go" "$(i '{{.HostConfig.Memory}}')" "1073741824"
+          check "redémarrage automatique" "$(i '{{.HostConfig.RestartPolicy.Name}}')" "unless-stopped"
+          check "port publié sur 127.0.0.1 seulement" \
+            "$(i '{{(index (index .HostConfig.PortBindings "8080/tcp") 0).HostIp}}')" "127.0.0.1"
+          check "contrôle de santé défini" "$(i '{{if .Config.Healthcheck}}oui{{end}}')" "oui"
+          check "data/ seul dossier inscriptible (volume)" \
+            "$(i '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Type}}{{end}}{{end}}')" "volume"
+          exit "$fail"
+
+  analyse-image:
+    name: 3 · Vulnérabilités de l'image (Trivy) + SBOM
+    needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: image
+      - name: Chargement
+        run: gunzip -c image.tar.gz | docker load
+      - name: Trivy (HIGH/CRITICAL corrigeables)
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
             image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
             --no-progress tradebot:local
-      - name: Arrêt propre (SIGTERM)
-        if: always()
-        run: docker compose down -v
+      - name: Inventaire des composants (SBOM CycloneDX)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" \
+            "$TRIVY_IMAGE" image --format cyclonedx --output /out/sbom.cdx.json \
+            --no-progress tradebot:local
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: sbom.cdx.json
+          retention-days: 30
+
+  # ════════════════════════ 4. VERDICT ════════════════════════
+
+  verdict:
+    name: 4 · Verdict
+    if: always()
+    needs: [hygiene, secrets, workflows, scripts, lint, typage, configuration, versions,
+            dependances, tests, couverture, image, demarrage, arret, durcissement,
+            analyse-image]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Tableau récapitulatif
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          {
+            echo "## Verdict de la CI"
+            echo
+            echo "| Point | Résultat |"
+            echo "|---|---|"
+            echo "$NEEDS" | jq -r 'to_entries[] | "| \(.key) | \(if .value.result == "success" then "✅" else "❌ \(.value.result)" end) |"'
+          } >> "$GITHUB_STEP_SUMMARY"
+          ko=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success") | .key] | join(", ")')
+          if [ -n "$ko" ]; then echo "::error::Points en échec : $ko"; exit 1; fi
+          echo "Tous les points sont verts"

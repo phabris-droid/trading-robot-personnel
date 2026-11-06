@@ -1,0 +1,16 @@
+name: Environnement Python du projet
+description: Python 3.12, dépendances en versions exactes (requirements-dev.lock) et outils de CI figés
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v6
+      with:
+        python-version: "3.12"
+        cache: pip
+        cache-dependency-path: requirements-dev.lock
+    - name: Installation depuis les versions exactes
+      shell: bash
+      run: |
+        python -m pip install -r requirements-dev.lock
+        python -m pip install --no-deps -e .
+        python -m pip install "pytest-cov==7.1.0" "pip-audit==2.10.1" "uv==0.13.7"
