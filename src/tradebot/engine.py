@@ -10,6 +10,7 @@ Règles :
 from __future__ import annotations
 
 import signal
+import sys
 import time
 
 from tradebot.settings import Settings
@@ -25,10 +26,24 @@ class Engine:
         self._stop = True
 
     def run(self) -> None:
+        last_error = None
         while not self._stop:
             started = time.monotonic()
-            self.cycle()
-            time.sleep(max(0, self.settings.cycle_seconds - (time.monotonic() - started)))
+            try:
+                self.cycle()
+                last_error = None
+            except Exception as exc:  # une erreur de cycle ne doit jamais arrêter le robot
+                msg = f"{type(exc).__name__}: {exc}"
+                if msg != last_error:  # pas de répétition du même message à chaque cycle
+                    print(f"Erreur pendant le cycle : {msg}", file=sys.stderr, flush=True)
+                last_error = msg
+            self._sleep(self.settings.cycle_seconds - (time.monotonic() - started))
+
+    def _sleep(self, seconds: float) -> None:
+        """Attente découpée pour réagir à SIGTERM en moins d'une seconde."""
+        end = time.monotonic() + max(0.0, seconds)
+        while not self._stop and time.monotonic() < end:
+            time.sleep(min(1.0, end - time.monotonic()))
 
     def cycle(self) -> None:
         """1. lire le capital  2. vérifier stops / ordres incertains  3. disjoncteurs

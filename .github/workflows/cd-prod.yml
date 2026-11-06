@@ -1,18 +1,17 @@
-# Déploiement continu : push sur prod → CI complète → validation manuelle → VPS.
+# Mise en ligne : push sur prod → CI complète → image publiée sur GHCR → VPS.
 #
-# Sécurité (argent réel en jeu) :
-#  - le job « deploy » utilise l'environnement GitHub « production » : y activer
-#    « Required reviewers » pour qu'aucun déploiement ne parte sans ton clic ;
-#  - le .env n'est jamais transmis : il reste sur le VPS (git reset ne touche pas
-#    les fichiers ignorés, data/ et ses bases SQLite sont conservés) ;
-#  - SIGTERM + stop_grace_period 90 s : le cycle en cours se termine proprement.
+# Le VPS n'a besoin que de Docker et d'un fichier /opt/tradebot/.env :
+# le pipeline y copie docker-compose.prod.yml, télécharge l'image et relance le robot.
+# Le .env n'est jamais transmis ; le volume de données (bases SQLite) est conservé.
 #
 # Secrets à créer dans Settings → Environments → production :
 #   VPS_HOST         ex. 213.156.135.38
-#   VPS_USER         ex. trader
+#   VPS_USER         ex. trader (membre du groupe docker)
 #   VPS_SSH_KEY      clé privée dédiée au déploiement (ed25519)
 #   VPS_KNOWN_HOSTS  sortie de : ssh-keyscan -t ed25519 213.156.135.38
-# Variable (facultative) : VPS_APP_DIR (défaut /opt/tradebot)
+# Variable facultative : VPS_APP_DIR (défaut /opt/tradebot)
+# Tant que ces secrets manquent, l'image est publiée mais le déploiement est sauté
+# (avertissement dans le résumé du pipeline).
 name: CD prod
 
 on:
@@ -27,21 +26,59 @@ concurrency:
   group: deploy-prod
   cancel-in-progress: false     # ne jamais interrompre un déploiement en cours
 
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
+  publish:
+    name: Publication de l'image (GHCR)
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.nom.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nom de l'image en minuscules
+        id: nom
+        run: echo "image=${IMAGE,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.nom.outputs.image }}:prod
+            ${{ steps.nom.outputs.image }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   deploy:
     name: Déploiement sur le VPS
-    needs: ci
+    needs: publish
     runs-on: ubuntu-latest
     environment:
       name: production
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     env:
       APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/tradebot' }}
+      IMAGE_REF: ${{ needs.publish.outputs.image }}:${{ github.sha }}
     steps:
-      - name: Vérifier la présence des secrets
+      - name: Secrets du VPS configurés ?
+        id: check
         env:
           H: ${{ secrets.VPS_HOST }}
           U: ${{ secrets.VPS_USER }}
@@ -54,11 +91,19 @@ jobs:
           [ -z "$K" ] && manquants="$manquants VPS_SSH_KEY"
           [ -z "$KH" ] && manquants="$manquants VPS_KNOWN_HOSTS"
           if [ -n "$manquants" ]; then
-            echo "::error::Secrets manquants dans l'environnement production :$manquants"
-            exit 1
+            echo "::warning::Déploiement sauté : secrets manquants dans l'environnement production :$manquants"
+            echo "### ⚠️ Déploiement sauté" >> "$GITHUB_STEP_SUMMARY"
+            echo "Image publiée : \`$IMAGE_REF\`. Secrets manquants :$manquants" >> "$GITHUB_STEP_SUMMARY"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ok == 'true'
+
       - name: Préparer SSH
+        if: steps.check.outputs.ok == 'true'
         env:
           K: ${{ secrets.VPS_SSH_KEY }}
           KH: ${{ secrets.VPS_KNOWN_HOSTS }}
@@ -67,32 +112,53 @@ jobs:
           printf '%s\n' "$K" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$KH" > ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts
 
-      - name: Mettre à jour et redémarrer le robot
+      - name: Copier docker-compose.prod.yml
+        if: steps.check.outputs.ok == 'true'
         env:
           H: ${{ secrets.VPS_HOST }}
           U: ${{ secrets.VPS_USER }}
-          SHA: ${{ github.sha }}
         run: |
-          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$U@$H" \
-            "APP_DIR='$APP_DIR' SHA='$SHA' bash -s" <<'EOS'
+          OPTS="-i $HOME/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          ssh $OPTS "$U@$H" "mkdir -p '$APP_DIR'"
+          scp $OPTS docker-compose.prod.yml "$U@$H:$APP_DIR/"
+
+      - name: Télécharger l'image et relancer le robot
+        if: steps.check.outputs.ok == 'true'
+        env:
+          H: ${{ secrets.VPS_HOST }}
+          U: ${{ secrets.VPS_USER }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          OPTS="-i $HOME/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          # Le jeton GHCR passe par l'entrée standard (jamais dans la ligne de commande distante)
+          {
+            printf 'GHCR_TOKEN=%q\n' "$GHCR_TOKEN"
+            cat <<'SCRIPT'
           set -euo pipefail
           cd "$APP_DIR"
           test -f .env || { echo "ERREUR : $APP_DIR/.env absent sur le VPS"; exit 1; }
-          git fetch --quiet origin prod
-          git checkout --quiet prod
-          git reset --hard "$SHA"
-          docker compose up -d --build
+          export TRADEBOT_IMAGE
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null
+          unset GHCR_TOKEN
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
           echo "Attente du healthcheck..."
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8080/health >/dev/null; then
-              echo "Robot en ligne (commit $SHA)"; exit 0
+              echo "Robot en ligne : $TRADEBOT_IMAGE"
+              docker image prune -f >/dev/null
+              exit 0
             fi
             sleep 5
           done
           echo "ERREUR : /health ne répond pas après 150 s"
-          docker compose logs --tail 80 tradebot
+          docker compose -f docker-compose.prod.yml logs --tail 80
           exit 1
-          EOS
+          SCRIPT
+          } | ssh $OPTS "$U@$H" \
+                "APP_DIR='$APP_DIR' TRADEBOT_IMAGE='$IMAGE_REF' GHCR_USER='$GHCR_USER' bash -s"
 
       - name: Nettoyer la clé
         if: always()

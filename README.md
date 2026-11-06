@@ -33,14 +33,38 @@ tradebot/
 └── docker-compose.yml
 ```
 
-## Démarrage rapide (démo)
+## Lancer le projet avec Docker (aucune installation Python requise)
+
+Seul prérequis : [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows / macOS)
+ou Docker Engine + plugin compose (Linux).
 
 ```bash
-cp .env.example .env && chmod 600 .env     # remplir les clés DÉMO
+git clone -b dev https://github.com/phabris-droid/trading-robot-personnel.git
+cd trading-robot-personnel
+docker compose up -d --build
+```
+
+- Tableau de bord / santé : <http://127.0.0.1:8080/health>
+- Journaux : `docker compose logs -f`
+- Arrêt : `docker compose down` (les données restent dans le volume `tradebot-data`)
+- Après une modification du code ou de `config/config.yaml` : `docker compose up -d --build`
+
+Sans fichier `.env`, le robot démarre en **démo, sans clés** (aucun ordre possible).
+Pour brancher les comptes démo : `cp .env.example .env`, remplir les clés, relancer.
+
+Lancer les tests sans rien installer :
+
+```bash
+docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
+  sh -c 'pip install -q -e ".[dev]" && python -m pytest -q'
+```
+
+## Développement local (facultatif, sans Docker)
+
+```bash
 python -m pip install -e ".[dev]"
-python -m pytest -q                         # doit passer entièrement
+python -m pytest -q
 python scripts/validate_markets.py          # désactiver les marchés « A_REVOIR »
-docker compose up -d --build                # Telegram : « Robot démarré en mode DEMO »
 ```
 
 Voir `STACK.md` pour les choix techniques.
@@ -48,22 +72,29 @@ Voir `STACK.md` pour les choix techniques.
 ## Branches et pipelines
 
 ```
-feature/*  ──PR──▶  dev  ──PR──▶  prod  ──▶ déploiement VPS (après validation manuelle)
+dev  (tests, démo)  ──push──▶  prod  ──▶  CI  ──▶  image GHCR  ──▶  mise en ligne sur le VPS
 ```
 
 | Branche | Rôle | Pipeline |
 |---------|------|----------|
-| `dev`   | intégration, mode démo | `CI` : garde-fous secrets, `pytest`, `ruff` (informatif), build Docker |
-| `prod`  | ce qui tourne sur le VPS | `CD prod` : CI complète → approbation → SSH → `docker compose up -d --build` → contrôle `/health` |
-| `main`  | branche par défaut d'origine | `CI` |
+| `main`  | vide, non utilisée | aucun |
+| `dev`   | travail et tests | `CI` : garde-fous secrets, `ruff`, `pytest`, build + démarrage réel du conteneur sans `.env` |
+| `prod`  | ce qui est en ligne | `CD prod` : même CI → image `ghcr.io/phabris-droid/trading-robot-personnel:prod` → VPS → contrôle `/health` |
 
-Une PR vers `prod` est refusée si elle ne vient pas de `dev` (`Règle de branches`).
+Mettre en ligne ce qui est sur `dev` :
 
-### Configuration GitHub à faire une fois
-1. **Settings → Environments → New environment `production`** : cocher *Required reviewers* (toi).
-2. Dans cet environnement, ajouter les secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`
-   (et la variable facultative `VPS_APP_DIR`, défaut `/opt/tradebot`).
-3. **Settings → Branches** : protéger `dev` et `prod` (PR obligatoire, statut `CI` vert requis,
-   pas de push forcé).
-4. Sur le VPS : `git clone` du dépôt dans `/opt/tradebot` (clé de déploiement en lecture seule si le
-   dépôt est privé), créer `.env` (`chmod 600`). Le pipeline ne transmet jamais le `.env`.
+```bash
+git checkout prod && git merge --ff-only dev && git push && git checkout dev
+```
+
+Si la CI échoue, rien n'est déployé.
+
+### Configuration à faire une fois
+1. **GitHub → Settings → Environments → `production`** : ajouter les secrets `VPS_HOST`,
+   `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS` (variable facultative `VPS_APP_DIR`, défaut
+   `/opt/tradebot`). Tant qu'ils manquent, l'image est publiée mais le déploiement est sauté.
+   Conseillé : cocher *Required reviewers* pour valider chaque mise en ligne d'un clic.
+2. **GitHub → Settings → General → Default branch** : choisir `dev` (puisque `main` reste vide).
+3. **Sur le VPS** : installer Docker, ajouter l'utilisateur au groupe `docker`, créer
+   `/opt/tradebot/.env` (`chmod 600`). Pas besoin de cloner le dépôt : le pipeline copie
+   `docker-compose.prod.yml` et télécharge l'image.

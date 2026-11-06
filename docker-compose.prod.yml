@@ -1,0 +1,29 @@
+# Production (VPS) : utilise l'image construite par le pipeline « CD prod »
+# et publiée sur GitHub Container Registry. Rien n'est compilé sur le VPS.
+# Le pipeline copie ce fichier dans /opt/tradebot puis lance :
+#   docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+# Le .env (clés, mot de passe) est OBLIGATOIRE ici et reste uniquement sur le VPS.
+services:
+  tradebot:
+    image: ${TRADEBOT_IMAGE:-ghcr.io/phabris-droid/trading-robot-personnel:prod}
+    container_name: tradebot
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: true
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 1g
+    volumes:
+      - tradebot-data:/app/data
+    ports:
+      - "127.0.0.1:8080:8080"
+    stop_grace_period: 90s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  tradebot-data:
