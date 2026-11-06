@@ -1,0 +1,104 @@
+# Configuration unique du robot. Tout paramètre inconnu ou hors bornes bloque le démarrage.
+mode: demo                 # demo | live (live exige CONFIRM_LIVE_TRADING=OUI)
+timeframe: 1h
+cycle_seconds: 60
+
+platforms:
+  binance:
+    enabled: true
+    trading_url_demo: https://demo-api.binance.com
+    trading_url_live: https://api.binance.com
+    market_data_url: https://api.binance.com     # les prix pour décider viennent du vrai marché
+    stop_limit_offset_pct: 0.5
+  capital:
+    enabled: true
+    url_demo: https://demo-api-capital.backend-capital.com
+    url_live: https://api-capital.backend-capital.com
+    keepalive_minutes: 5
+
+markets:
+  - { platform: binance, symbol: BTCUSDT, strategy: breakout,       sides: [buy] }
+  - { platform: binance, symbol: ETHUSDT, strategy: trend_ema,      sides: [buy] }
+  - { platform: binance, symbol: SOLUSDT, strategy: mean_reversion, sides: [buy] }
+  - { platform: capital, symbol: EURUSD,  strategy: mean_reversion, sides: [buy, sell] }
+  - { platform: capital, symbol: GBPUSD,  strategy: trend_ema,      sides: [buy, sell] }
+  - { platform: capital, symbol: GOLD,    strategy: breakout,       sides: [buy, sell] }
+
+strategies:
+  trend_ema:
+    ema_fast: 20
+    ema_slow: 50
+    ema_filter: 200
+    adx_min: 20
+    stop_atr: 2.0
+    target_atr: 3.0
+  mean_reversion:
+    rsi_period: 14
+    rsi_entry: 30
+    rsi_exit: 55
+    bb_period: 20
+    bb_std: 2.0
+    adx_max: 25
+    stop_atr: 1.5
+  breakout:
+    lookback: 20
+    atr_ratio_min: 0.8
+    atr_mean_period: 50
+    stop_atr: 2.0
+    target_atr: 4.0
+    exit_lookback: 10
+  atr_period: 14
+
+risk:
+  risk_per_trade_pct: 1.0          # bornes 0,01 – 5
+  max_position_pct: 25
+  small_account_max_risk_pct: 3.0
+  max_spread_to_stop: 0.25
+  daily_loss_pct: 3.0
+  max_drawdown_pct: 15.0           # bornes 1 – 50
+  max_open_positions: 4
+  max_forex_positions: 2
+  max_trades_per_day: 10
+  equity_drop_confirm_pct: 10.0    # chute à confirmer au cycle suivant
+
+analysts:
+  news_watch:
+    event_window_min: 30
+    high_impact_news_hours: 2
+    shock_candle_atr: 3.0
+    feed_max_bytes: 2097152
+    feed_timeout_s: 20
+  financial:
+    resistance_atr: 0.5
+    volatility_percentile_max: 97
+    min_reward_risk: 1.2
+    min_reward_risk_mean_reversion: 1.0
+  risk:
+    max_open_risk_pct: 5.0
+    max_correlated_positions: 2
+    loss_streak_market: 3
+    loss_streak_market_pause_h: 24
+    loss_streak_total: 5
+    loss_streak_total_pause_h: 12
+    min_equity: 50
+    max_equity_drop_24h_pct: 5.0
+  ai:
+    enabled: true
+    model: claude-haiku-5-5
+    min_reject_confidence: 0.70
+    max_calls_decisions_per_day: 50
+    max_calls_news_per_day: 24
+
+reports:
+  morning_utc: "07:00"
+  audit_day: sun
+  audit_utc: "18:00"
+
+dashboard:
+  port: 8080
+  refresh_seconds: 10
+
+storage:
+  demo_db: data/tradebot_demo.db
+  live_db: data/tradebot_live.db
+  audits_dir: data/audits

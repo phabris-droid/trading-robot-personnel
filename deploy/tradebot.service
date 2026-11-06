@@ -1,0 +1,18 @@
+[Unit]
+Description=tradebot
+After=network-online.target
+
+[Service]
+User=trader
+WorkingDirectory=/opt/tradebot
+EnvironmentFile=/opt/tradebot/.env
+ExecStart=/opt/tradebot/.venv/bin/python -m tradebot
+Restart=always
+KillSignal=SIGTERM
+TimeoutStopSec=90
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/tradebot/data
+
+[Install]
+WantedBy=multi-user.target

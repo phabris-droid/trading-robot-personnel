@@ -1,0 +1,25 @@
+# Règle de promotion : seule la branche dev peut être fusionnée dans prod.
+# Flux : feature/* → dev → prod
+name: Règle de branches
+
+on:
+  pull_request:
+    branches: [prod]
+
+permissions:
+  contents: read
+
+jobs:
+  source-dev:
+    name: prod n'accepte que dev
+    runs-on: ubuntu-latest
+    steps:
+      - name: Vérifier la branche source
+        env:
+          SOURCE: ${{ github.head_ref }}
+        run: |
+          if [ "$SOURCE" != "dev" ]; then
+            echo "::error::Une PR vers prod doit venir de dev (reçu : $SOURCE)."
+            exit 1
+          fi
+          echo "OK : dev → prod"
