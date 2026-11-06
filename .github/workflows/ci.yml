@@ -41,6 +41,7 @@ jobs:
   hygiene:
     name: 1 · Hygiène du dépôt
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - name: Aucun .env ni base SQLite versionné
@@ -63,6 +64,7 @@ jobs:
   secrets:
     name: 1 · Secrets (gitleaks, tout l'historique)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -75,17 +77,26 @@ jobs:
   workflows:
     name: 1 · Workflows GitHub (actionlint)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - name: actionlint + shellcheck des scripts intégrés
         run: |
-          # chaque erreur devient une annotation visible dans le résumé de l'exécution
-          docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -format \
-            '{{range $e := .}}::error file={{$e.Filepath}},line={{$e.Line}},col={{$e.Column}}::{{$e.Message}}{{"\n"}}{{end}}'
+          # sortie complète (y compris erreur fatale) recopiée en annotations
+          rc=0
+          docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -no-color \
+            > actionlint.log 2>&1 || rc=$?
+          cat actionlint.log
+          if [ "$rc" != 0 ]; then
+            while IFS= read -r ligne; do echo "::error::actionlint (code $rc) : $ligne"; done \
+              < <(grep -v '^\s*$' actionlint.log | grep -v '^ *|' | head -40)
+          fi
+          exit "$rc"
 
   scripts:
     name: 1 · Scripts shell (bash -n, shellcheck)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - name: Syntaxe (bash -n)
@@ -96,6 +107,7 @@ jobs:
   lint:
     name: 1 · Lint (ruff)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/python-env
@@ -105,6 +117,7 @@ jobs:
   typage:
     name: 1 · Typage (mypy)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/python-env
@@ -114,6 +127,7 @@ jobs:
   configuration:
     name: 1 · Configuration du robot
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/python-env
@@ -144,6 +158,7 @@ jobs:
   versions:
     name: 1 · Versions exactes (cohérence)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/python-env
@@ -162,6 +177,7 @@ jobs:
   dependances:
     name: 1 · Dépendances vulnérables (pip-audit)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/python-env
@@ -171,6 +187,7 @@ jobs:
   securite-code:
     name: 1 · Sécurité du code (règles bandit)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/python-env
@@ -183,6 +200,7 @@ jobs:
     name: 2 · Tests ${{ matrix.domaine }}
     needs: [lint, typage, configuration, versions]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -243,6 +261,7 @@ jobs:
     name: 2 · Tests isolés (sans réseau, ordre aléatoire)
     needs: [lint, typage, configuration, versions]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/python-env
@@ -265,6 +284,7 @@ jobs:
     name: 2 · Couverture combinée + tests oubliés
     needs: tests
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/python-env
@@ -300,6 +320,7 @@ jobs:
     name: 3 · Build de l'image
     needs: [hygiene, secrets]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - name: docker-compose valides (local et prod)
@@ -321,6 +342,7 @@ jobs:
     name: 3 · Démarrage sans .env (/health = moteur vivant)
     needs: image
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
@@ -335,7 +357,7 @@ jobs:
         run: |
           for i in $(seq 1 30); do
             etat=$(docker inspect -f '{{.State.Health.Status}}' tradebot 2>/dev/null || echo absent)
-            if [ "$etat" = "healthy" ] && curl -fsS http://127.0.0.1:8080/health; then
+            if [ "$etat" = "healthy" ] && curl -fsS --max-time 5 http://127.0.0.1:8080/health; then
               echo; echo "Conteneur sain"; exit 0
             fi
             echo "tentative $i : $etat"; sleep 5
@@ -347,13 +369,14 @@ jobs:
           docker compose logs | grep -q "Robot démarré en mode DEMO"
       - name: Tableau de bord fermé sans mot de passe
         run: |
-          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)
+          code=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)
           test "$code" = "503" || { echo "::error::/ répond $code au lieu de 503"; exit 1; }
 
   arret:
     name: 3 · Arrêt propre (SIGTERM)
     needs: image
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
@@ -363,7 +386,7 @@ jobs:
         run: |
           gunzip -c image.tar.gz | docker load
           docker compose up -d --no-build
-          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 3; done
+          for _ in $(seq 1 30); do curl -fsS --max-time 5 http://127.0.0.1:8080/health && break; sleep 3; done
       - name: SIGTERM -> cycle terminé, sortie propre (code 0)
         run: |
           docker compose stop
@@ -376,6 +399,7 @@ jobs:
     name: 3 · Durcissement du conteneur (CDC §8)
     needs: image
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
@@ -407,6 +431,7 @@ jobs:
     name: 3 · Secrets jamais journalisés + contrôle d'accès
     needs: image
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
@@ -430,7 +455,7 @@ jobs:
           docker run -d --name tradebot --env-file /tmp/secrets.env \
             -v /tmp/cfg:/app/config:ro --read-only --tmpfs /tmp \
             --tmpfs /app/data:uid=10001,gid=10001 -p 127.0.0.1:8080:8080 tradebot:local
-          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 3; done
+          for _ in $(seq 1 30); do curl -fsS --max-time 5 http://127.0.0.1:8080/health && break; sleep 3; done
           sleep 5
       - name: Contrôle d'accès du tableau de bord (CDC §8)
         run: |
@@ -439,7 +464,7 @@ jobs:
           bon="admin:$pw"
           faux1="admin:$(openssl rand -hex 8)"
           faux2="admin:$(openssl rand -hex 8)"
-          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          code() { curl -s --max-time 5 -o /dev/null -w '%{http_code}' "$@"; }
           fail=0
           expect() { if [ "$2" = "$3" ]; then echo "OK   $1 ($2)"; else echo "::error::$1 : $2 au lieu de $3"; fail=1; fi; }
           expect "/health public" "$(code http://127.0.0.1:8080/health)" 200
@@ -466,6 +491,7 @@ jobs:
     name: 3 · Vulnérabilités de l'image (Trivy) + SBOM
     needs: image
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/download-artifact@v7
         with:
@@ -494,6 +520,7 @@ jobs:
     name: 4 · Compose de production + mode réel refusé
     needs: [demarrage, durcissement]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
@@ -512,7 +539,7 @@ jobs:
           dir=$(mktemp -d) && cp docker-compose.prod.yml "$dir/"
           printf 'DASHBOARD_USER=admin\nDASHBOARD_PASSWORD=%s\n' "$(openssl rand -hex 12)" > "$dir/.env"
           TRADEBOT_IMAGE=tradebot:local docker compose -f "$dir/docker-compose.prod.yml" up -d
-          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && exit 0; sleep 3; done
+          for _ in $(seq 1 30); do curl -fsS --max-time 5 http://127.0.0.1:8080/health && exit 0; sleep 3; done
           docker logs tradebot --tail 50; exit 1
       - name: Journaux Docker limités (10 Mo × 5)
         run: |
@@ -534,6 +561,7 @@ jobs:
     name: 4 · Redémarrage (données conservées, CDC §10 J4)
     needs: [demarrage, arret]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
@@ -543,7 +571,7 @@ jobs:
         run: |
           gunzip -c image.tar.gz | docker load
           docker compose up -d --no-build
-          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 3; done
+          for _ in $(seq 1 30); do curl -fsS --max-time 5 http://127.0.0.1:8080/health && break; sleep 3; done
       - name: Journal relu avant et après « docker compose restart »
         run: |
           compte() {
@@ -553,7 +581,7 @@ jobs:
           avant=$(compte); echo "événements avant : $avant"
           test "$avant" -ge 1
           docker compose restart
-          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:8080/health && break; sleep 3; done
+          for _ in $(seq 1 30); do curl -fsS --max-time 5 http://127.0.0.1:8080/health && break; sleep 3; done
           apres=$(compte); echo "événements après : $apres"
           test "$apres" -ge "$avant" || { echo "::error::données perdues au redémarrage"; exit 1; }
           test "$(docker inspect -f '{{.RestartCount}}' tradebot)" = "0"
@@ -562,6 +590,7 @@ jobs:
     name: 4 · Répétition du déploiement + retour arrière
     needs: [demarrage, scripts]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/download-artifact@v7
@@ -583,7 +612,7 @@ jobs:
           fi
           image=$(docker inspect -f '{{.Config.Image}}' tradebot)
           test "$image" = "tradebot:bonne" || { echo "::error::image en service : $image"; exit 1; }
-          curl -fsS http://127.0.0.1:8080/health
+          curl -fsS --max-time 5 http://127.0.0.1:8080/health
           test "$(cat "$APP_DIR/.deployed_image")" = "tradebot:bonne"
           echo; echo "OK   retour automatique à la version précédente"
 
@@ -597,6 +626,7 @@ jobs:
             durcissement, secrets-acces, analyse-image, prod-config, redemarrage,
             repetition-deploiement]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Tableau récapitulatif
         env:

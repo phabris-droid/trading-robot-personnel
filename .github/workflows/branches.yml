@@ -13,6 +13,7 @@ jobs:
   source-dev:
     name: prod n'accepte que dev
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Vérifier la branche source
         env:

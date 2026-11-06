@@ -37,6 +37,7 @@ jobs:
     name: Publication de l'image (GHCR)
     needs: ci
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -70,7 +71,7 @@ jobs:
           docker run -d --name candidate --read-only --tmpfs /tmp \
             --tmpfs /app/data:uid=10001,gid=10001 -p 127.0.0.1:8080:8080 "$REF"
           for _ in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8080/health; then echo; docker rm -f candidate; exit 0; fi
+            if curl -fsS --max-time 5 http://127.0.0.1:8080/health; then echo; docker rm -f candidate; exit 0; fi
             sleep 3
           done
           docker logs --tail 80 candidate; exit 1
@@ -108,12 +109,12 @@ jobs:
     name: Déploiement sur le VPS
     needs: publish
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     environment:
       name: production
     permissions:
       contents: read
       packages: read
-    timeout-minutes: 20
     env:
       APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/tradebot' }}
       IMAGE_REF: ${{ needs.publish.outputs.digest }}   # image testée, par empreinte

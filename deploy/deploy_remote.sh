@@ -38,7 +38,7 @@ PREVIOUS=$(docker inspect --format '{{.Config.Image}}' tradebot 2>/dev/null || t
 wait_health() {
   local _try
   for _try in $(seq 1 "$HEALTH_TRIES"); do
-    curl -fsS "$HEALTH_URL" >/dev/null 2>&1 && return 0
+    curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1 && return 0
     sleep "$HEALTH_DELAY"
   done
   return 1

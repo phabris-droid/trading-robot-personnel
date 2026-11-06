@@ -22,6 +22,7 @@ jobs:
   codeql:
     name: CodeQL (${{ matrix.langage }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: read
@@ -44,6 +45,7 @@ jobs:
     name: Revue des dépendances de la pull request
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/dependency-review-action@v5.0.0
