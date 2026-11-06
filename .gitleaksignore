@@ -1,0 +1,3 @@
+# Alertes gitleaks examinées et écartées (empreinte exacte, la règle reste active).
+# Faux identifiants de test du tableau de bord écrits en clair dans la CI, retirés au commit suivant.
+2565f0e14a3b61088a6b5f1ed101c903691a4fb5:.github/workflows/ci.yml:curl-auth-user:435

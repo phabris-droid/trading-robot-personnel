@@ -432,16 +432,20 @@ jobs:
       - name: Contrôle d'accès du tableau de bord (CDC §8)
         run: |
           pw=$(grep '^DASHBOARD_PASSWORD=' /tmp/secrets.env | cut -d= -f2)
+          # identifiants jamais écrits en clair : mauvais mots de passe tirés au hasard
+          bon="admin:$pw"
+          faux1="admin:$(openssl rand -hex 8)"
+          faux2="admin:$(openssl rand -hex 8)"
           code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
           fail=0
           expect() { if [ "$2" = "$3" ]; then echo "OK   $1 ($2)"; else echo "::error::$1 : $2 au lieu de $3"; fail=1; fi; }
           expect "/health public" "$(code http://127.0.0.1:8080/health)" 200
           expect "sans identifiants" "$(code http://127.0.0.1:8080/)" 401
-          expect "mauvais mot de passe" "$(code -u admin:faux http://127.0.0.1:8080/)" 401
-          expect "essai raté < 1 s après" "$(code -u admin:faux2 http://127.0.0.1:8080/)" 429
-          expect "bon mot de passe toujours accepté" "$(code -u "admin:$pw" http://127.0.0.1:8080/)" 200
+          expect "mauvais mot de passe" "$(code --user "$faux1" http://127.0.0.1:8080/)" 401
+          expect "essai raté < 1 s après" "$(code --user "$faux2" http://127.0.0.1:8080/)" 429
+          expect "bon mot de passe toujours accepté" "$(code --user "$bon" http://127.0.0.1:8080/)" 200
           expect "origine étrangère refusée" \
-            "$(code -X POST -u "admin:$pw" -H 'Origin: https://pirate.example' http://127.0.0.1:8080/api/status)" 403
+            "$(code -X POST --user "$bon" -H 'Origin: https://pirate.example' http://127.0.0.1:8080/api/status)" 403
           exit "$fail"
       - name: Aucun secret dans les journaux du conteneur ni dans le journal SQLite (CLAUDE.md règle 6)
         run: |
