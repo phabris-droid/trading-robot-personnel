@@ -84,6 +84,7 @@ jobs:
         run: |
           # sortie complète (y compris erreur fatale) recopiée en annotations
           rc=0
+          docker pull -q "$ACTIONLINT_IMAGE" > /dev/null
           docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -no-color \
             > actionlint.log 2>&1 || rc=$?
           cat actionlint.log
