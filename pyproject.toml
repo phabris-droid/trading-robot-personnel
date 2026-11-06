@@ -33,6 +33,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# fichiers non Python embarqués dans le paquet (sinon absents de l'image Docker : page
+# du tableau de bord en erreur 500, détecté par la CI « contrôle d'accès » sur le conteneur)
+[tool.setuptools.package-data]
+tradebot = ["interfaces/static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

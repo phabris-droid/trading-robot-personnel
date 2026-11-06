@@ -78,7 +78,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: actionlint + shellcheck des scripts intégrés
-        run: docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -color
+        run: |
+          # chaque erreur devient une annotation visible dans le résumé de l'exécution
+          docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -format \
+            '{{range $e := .}}::error file={{$e.Filepath}},line={{$e.Line}},col={{$e.Column}}::{{$e.Message}}{{"\n"}}{{end}}'
 
   scripts:
     name: 1 · Scripts shell (bash -n, shellcheck)
