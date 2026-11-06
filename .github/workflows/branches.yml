@@ -12,7 +12,7 @@ permissions:
 jobs:
   source-dev:
     name: prod n'accepte que dev
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Vérifier la branche source
         env:

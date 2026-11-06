@@ -19,7 +19,7 @@ permissions:
 jobs:
   garde-fous:
     name: Garde-fous (secrets, fichiers interdits)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - name: Aucun .env ni base SQLite versionné
@@ -40,7 +40,7 @@ jobs:
 
   tests:
     name: Lint + tests (Python 3.12)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: garde-fous
     steps:
       - uses: actions/checkout@v5
@@ -70,7 +70,7 @@ jobs:
 
   docker:
     name: Docker (build + démarrage sans .env)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: tests
     steps:
       - uses: actions/checkout@v5
