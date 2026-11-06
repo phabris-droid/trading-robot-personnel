@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 
+from tradebot.journal import Journal, JournalError
 from tradebot.settings import ConfigError, load_settings
 
 
@@ -24,17 +25,36 @@ def _start_dashboard(port: int) -> threading.Thread:
     return thread
 
 
+def _connectors(settings, journal, env) -> dict:
+    """Fonctions de connexion des plateformes (relancées toutes les 5 min en cas d'échec).
+    Capital.com reste désactivé tant que l'étape 3 n'est pas faite."""
+    out = {}
+    if settings.platforms.binance.enabled:
+        def binance():
+            from tradebot.brokers.binance import BinanceSpot
+
+            bn = BinanceSpot.from_settings(settings, env)
+            bn.sync_time()
+            bn.ensure_baseline(journal)     # avoirs personnels : relevés une seule fois
+            return bn
+        out["binance"] = binance
+    return out
+
+
 def main() -> int:
+    env = dict(os.environ)
     try:
-        settings = load_settings()
-    except ConfigError as exc:
+        settings = load_settings(env=env)
+        journal = Journal.from_settings(settings)
+    except (ConfigError, JournalError) as exc:
         print(f"Démarrage refusé : {exc}", file=sys.stderr)
         return 2
     from tradebot.engine import Engine
 
     _start_dashboard(settings.dashboard.port)
     print(f"Robot démarré en mode {settings.mode.upper()}", flush=True)
-    Engine(settings).run()
+    Engine(settings, journal, connectors=_connectors(settings, journal, env)).run()
+    journal.close()
     print("Robot arrêté proprement", flush=True)
     return 0
 

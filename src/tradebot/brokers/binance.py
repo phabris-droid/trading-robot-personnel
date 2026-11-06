@@ -270,6 +270,10 @@ class BinanceSpot(Broker):
                 min_notional=Decimal(notional.get("minNotional", "0")))
         return self._filters[symbol]
 
+    def min_qty(self, symbol: str) -> float:
+        """Taille minimale d'un ordre (LOT_SIZE), pour la règle petit compte."""
+        return float(self.filters(symbol).min_qty)
+
     # --- compte -----------------------------------------------------------------------------
 
     def balances(self) -> dict[str, tuple[float, float]]:
