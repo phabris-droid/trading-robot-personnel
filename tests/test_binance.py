@@ -521,3 +521,30 @@ def test_untracked_balance_is_detected(mock, bn):
     bn.baseline = {"BTC": 0.5}
     mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.60122"))
     assert bn.untracked_balances() == {"BTC": pytest.approx(0.1)}
+
+
+# --- m1 : Retry-After -----------------------------------------------------------------------
+
+def test_retry_after_seconds_date_garbage_and_cap():
+    from email.utils import parsedate_to_datetime
+
+    from tradebot.brokers.binance import parse_retry_after
+
+    date = "Wed, 21 Oct 2026 07:28:00 GMT"
+    now = parsedate_to_datetime(date).timestamp() - 10
+    assert parse_retry_after("3", now) == 3
+    assert parse_retry_after(date, now) == pytest.approx(10)
+    assert parse_retry_after("3600", now) == 60            # plafonné à 60 s
+    assert parse_retry_after("-5", now) == 0
+    assert parse_retry_after("bientôt", now, default=2) == 2
+    assert parse_retry_after("nan", now, default=2) == 2
+    assert parse_retry_after(None, now, default=2) == 2
+
+
+def test_garbage_retry_after_header_does_not_crash(mock, bn, sleeps):
+    mock.get(host=DEMO, path="/api/v3/account").mock(side_effect=[
+        httpx.Response(429, headers={"Retry-After": "n'importe quoi"}),
+        httpx.Response(200, json=_account()),
+    ])
+    bn.balances()
+    assert sleeps == [0.5]

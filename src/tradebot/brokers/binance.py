@@ -31,6 +31,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -98,6 +99,28 @@ class BinancePosition:
     oco_seq: int = 0
     exit_seq: int = 0
     status: str = "open"   # open | unprotected | inconsistent | closed
+
+
+RETRY_AFTER_MAX_S = 60.0
+
+
+def parse_retry_after(value: str | None, now: float, default: float = 1.0,
+                      cap: float = RETRY_AFTER_MAX_S) -> float:
+    """En-tête Retry-After : secondes (« 3 ») ou date HTTP (« Wed, 21 Oct 2026 07:28:00 GMT »).
+    Valeur absente ou illisible -> `default`. Résultat borné entre 0 et `cap` secondes."""
+    seconds = default
+    if value:
+        text = value.strip()
+        try:
+            seconds = float(text)
+        except ValueError:
+            try:
+                seconds = parsedate_to_datetime(text).timestamp() - now
+            except (TypeError, ValueError, IndexError, OverflowError):
+                seconds = default
+    if not math.isfinite(seconds):
+        seconds = default
+    return min(max(seconds, 0.0), cap)
 
 
 def _floor(value: Decimal, step: Decimal) -> Decimal:
@@ -204,7 +227,9 @@ class BinanceSpot(Broker):
             if status in (429, 418):
                 if kind == "order" or attempt >= self.max_retries:
                     raise RateLimited(f"Binance : limite de requêtes (HTTP {status})")
-                self._sleep(max(retry_in, float(resp.headers.get("Retry-After", 0) or 0)))
+                wait = parse_retry_after(resp.headers.get("Retry-After"), self._clock(),
+                                         default=retry_in)
+                self._sleep(max(retry_in, wait))
                 continue
             if status >= 500:
                 if kind == "order":
