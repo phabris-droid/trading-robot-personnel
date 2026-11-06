@@ -43,6 +43,7 @@ from tradebot.brokers.base import (
     BrokerUnavailable,
     OrderRejected,
     OrderUncertain,
+    PositionInconsistent,
     RateLimited,
     StopNotPlaced,
     StopStatus,
@@ -57,10 +58,11 @@ EP_ACCOUNT = "/api/v3/account"
 EP_ORDER = "/api/v3/order"
 EP_OCO = "/api/v3/orderList/oco"
 EP_ORDER_LIST = "/api/v3/orderList"
+EP_OPEN_ORDERS = "/api/v3/openOrders"
 CODE_TIMESTAMP = -1021            # horodatage hors recvWindow : requête refusée, resynchroniser
 CODES_NOT_FOUND = {-2011, -2013}  # ordre / liste introuvable
 OCO_ACTIVE = {"EXECUTING"}        # listOrderStatus d'un OCO encore en place
-CLIENT_ID_MAX = 32                # Binance accepte 36 ; on garde 4 caractères pour les suffixes
+CLIENT_ID_MAX = 28                # Binance accepte 36 : suffixes « -oNNa » réservés
 HOUR_MS = 3_600_000
 
 
@@ -90,7 +92,7 @@ class BinancePosition:
     oco_id: str = ""
     oco_seq: int = 0
     exit_seq: int = 0
-    status: str = "open"   # open | unprotected | closed
+    status: str = "open"   # open | unprotected | inconsistent | closed
 
 
 def _floor(value: Decimal, step: Decimal) -> Decimal:
@@ -329,6 +331,8 @@ class BinanceSpot(Broker):
         params = {
             "symbol": pos.symbol, "side": "SELL", "quantity": _fmt(qty),
             "listClientOrderId": list_id,
+            # identifiants des 2 jambes : retrouvables dans les ordres ouverts
+            "aboveClientOrderId": f"{list_id}a", "belowClientOrderId": f"{list_id}b",
             "aboveType": "LIMIT_MAKER", "abovePrice": _fmt(target),
             "belowType": "STOP_LOSS_LIMIT", "belowStopPrice": _fmt(stop),
             "belowPrice": _fmt(limit), "belowTimeInForce": "GTC",
@@ -344,14 +348,41 @@ class BinanceSpot(Broker):
         pos.oco_id = list_id
         pos.status = "open"
 
-    def _sell_now(self, pos: BinancePosition, qty: Decimal | None = None) -> None:
+    def _oco_fill(self, list_client_id: str) -> dict | None:
+        """Jambe de l'OCO réellement exécutée (quantité > 0), sinon None."""
+        lst = self._find_oco(list_client_id) if list_client_id else None
+        for leg in (lst or {}).get("orders", []):
+            od = self._request("GET", self.trading_url, EP_ORDER,
+                               {"symbol": leg["symbol"], "orderId": leg["orderId"]}, signed=True)
+            if Decimal(str(od.get("executedQty", "0"))) > 0:
+                return od
+        return None
+
+    def _sell(self, pos: BinancePosition, qty: Decimal) -> None:
+        """Vente au marché de `qty`. La position n'est déclarée fermée que si la vente
+        exécutée couvre la quantité suivie ; sinon elle devient « incohérente »."""
         f = self.filters(pos.symbol)
-        if qty is None:
-            qty = f.floor_qty(min(pos.qty, self._robot_free(f.base_asset)))
-        if qty >= f.min_qty and qty > 0:
-            pos.exit_seq += 1
-            self._market(pos.symbol, "sell", qty, f"{pos.client_id}-x{pos.exit_seq}")
-        pos.status = "closed"
+        if qty < f.min_qty or qty <= 0:
+            pos.status = "inconsistent"
+            raise PositionInconsistent(pos.id, f"quantité vendable {qty} sous le minimum "
+                                               f"({f.min_qty}) pour une position de {pos.qty}")
+        pos.exit_seq += 1
+        try:
+            fill = self._market(pos.symbol, "sell", qty, f"{pos.client_id}-x{pos.exit_seq}")
+        except OrderRejected as exc:
+            pos.status = "inconsistent"
+            raise PositionInconsistent(pos.id, f"vente refusée : {exc}") from None
+        self._apply_exit(pos, Decimal(str(fill.get("executedQty", "0"))))
+
+    def _apply_exit(self, pos: BinancePosition, executed: Decimal) -> None:
+        f = self.filters(pos.symbol)
+        remaining = Decimal(str(pos.qty)) - executed
+        if remaining < f.min_qty:
+            pos.status = "closed"
+            return
+        pos.qty = float(remaining)
+        pos.status = "inconsistent"
+        raise PositionInconsistent(pos.id, f"sortie partielle : {remaining} restant")
 
     def open_position(self, symbol: str, side: str, qty: float, stop: float, target: float,
                       client_id: str) -> str:
@@ -389,7 +420,7 @@ class BinanceSpot(Broker):
         except BrokerError as exc:
             # CDC §6 : si le stop ne peut pas être posé, la position est fermée aussitôt
             try:
-                self._sell_now(pos, net)
+                self._sell(pos, net)
             except BrokerError as sell_exc:
                 raise StopNotPlaced(pos.id, closed=False, cause=f"{exc} / {sell_exc}") from None
             raise StopNotPlaced(pos.id, closed=True, cause=str(exc)) from None
@@ -413,23 +444,40 @@ class BinanceSpot(Broker):
             self._place_oco(pos, held)
             return "replaced"
         except BrokerError:
-            self._sell_now(pos, held)        # en cas d'échec, l'erreur remonte : réessayer
+            self._sell(pos, held)            # en cas d'échec, l'erreur remonte : réessayer
             return "closed_no_stop"
 
     def close_position(self, position_id: str) -> None:
+        """Annule l'OCO puis vend. Ne déclare JAMAIS la position fermée sans avoir vu une
+        vente exécutée ou l'exécution de l'OCO (CDC §6)."""
         pos = self._positions[position_id]
         if pos.status == "closed":
             return
+        f = self.filters(pos.symbol)
         if pos.oco_id:
             try:
                 self._request("DELETE", self.trading_url, EP_ORDER_LIST,
                               {"symbol": pos.symbol, "listClientOrderId": pos.oco_id},
                               signed=True, kind="cancel")
             except ApiError as exc:
-                if exc.code not in CODES_NOT_FOUND:   # déjà exécuté ou annulé : on continue
+                if exc.code not in CODES_NOT_FOUND:   # déjà exécuté ou annulé : on vérifie
                     raise
+            filled = self._oco_fill(pos.oco_id)
+            if filled:                                 # stop ou objectif exécuté
+                self._apply_exit(pos, Decimal(str(filled["executedQty"])))
+                return
         pos.status = "unprotected"
-        self._sell_now(pos)
+        # l'annulation doit avoir libéré la quantité : plus aucun ordre du robot ouvert
+        still_open = [o for o in self._request("GET", self.trading_url, EP_OPEN_ORDERS,
+                                               {"symbol": pos.symbol}, signed=True)
+                      if str(o.get("clientOrderId", "")).startswith(pos.client_id)]
+        if still_open:
+            pos.status = "inconsistent"
+            raise PositionInconsistent(pos.id, f"{len(still_open)} ordre(s) encore ouvert(s) "
+                                               "après l'annulation de l'OCO")
+        free, _locked = self.balances().get(f.base_asset, (0.0, 0.0))
+        # quantité suivie, plafonnée au solde libre réel (jamais « solde − départ »)
+        self._sell(pos, f.floor_qty(min(pos.qty, free)))
 
     def adopt(self, position: dict) -> None:
         """Reprend une position du journal après un redémarrage."""

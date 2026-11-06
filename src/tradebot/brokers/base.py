@@ -55,6 +55,17 @@ class StopNotPlaced(BrokerError):
         self.closed = closed
 
 
+class PositionInconsistent(BrokerError):
+    """La plateforme ne confirme ni la fermeture ni la protection d'une position suivie.
+    L'appelant met le marché en pause, alerte sur Telegram et garde le stop logiciel actif.
+    La position n'est JAMAIS considérée comme fermée dans ce cas."""
+
+    def __init__(self, position_id: str, cause: str):
+        super().__init__(f"position {position_id} incohérente : {cause}")
+        self.position_id = position_id
+        self.cause = cause
+
+
 class Broker(ABC):
     name: str
 

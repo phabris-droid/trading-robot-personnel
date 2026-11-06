@@ -11,6 +11,7 @@ from tradebot.brokers.base import (
     BrokerUnavailable,
     OrderRejected,
     OrderUncertain,
+    PositionInconsistent,
     RateLimited,
     StopNotPlaced,
 )
@@ -74,7 +75,8 @@ def _orders_route(mock, buy=None, sell=None):
         resp = buy if side == "BUY" else sell
         if isinstance(resp, Exception):
             raise resp
-        return resp or httpx.Response(200, json={**FILL, "side": side})
+        qty = request.url.params["quantity"]       # exécution complète de la quantité demandée
+        return resp or httpx.Response(200, json={**FILL, "side": side, "executedQty": qty})
     return mock.post(host=DEMO, path="/api/v3/order").mock(side_effect=handler)
 
 
@@ -317,13 +319,23 @@ def test_reads_give_up_after_max_retries(mock, bn):
 
 # --- fermeture et avoirs personnels ---------------------------------------------------------
 
-def test_close_cancels_oco_then_sells_only_robot_quantity(mock, bn):
+def _close_routes(mock, btc_free, open_orders=(), oco=None):
+    """Routes d'une fermeture : annulation OCO, recherche OCO, ordres ouverts, solde."""
+    cancel = mock.delete(host=DEMO, path="/api/v3/orderList").respond(json={})
+    if oco is None:
+        mock.get(host=DEMO, path="/api/v3/orderList").respond(400, json=NOT_FOUND)
+    else:
+        mock.get(host=DEMO, path="/api/v3/orderList").respond(json=oco)
+    mock.get(host=DEMO, path="/api/v3/openOrders").respond(json=list(open_orders))
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free=btc_free))
+    return cancel
+
+
+def test_close_cancels_oco_then_sells_tracked_quantity(mock, bn):
     _open(mock, bn)
     orders = _orders_route(mock)
-    cancel = mock.delete(host=DEMO, path="/api/v3/orderList").respond(json={})
-    # 0,5 BTC personnel présent au démarrage + 0,00122 BTC du robot
-    bn.baseline = {"BTC": 0.5}
-    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.50122"))
+    # 0,5 BTC personnel + 0,00122 BTC du robot : seule la quantité suivie est vendue
+    cancel = _close_routes(mock, btc_free="0.50122")
     bn.close_position("t1")
     assert cancel.call_count == 1
     assert _params(cancel.calls.last)["listClientOrderId"] == "t1-o1"
@@ -335,11 +347,68 @@ def test_close_cancels_oco_then_sells_only_robot_quantity(mock, bn):
 def test_close_continues_if_oco_already_gone(mock, bn):
     _open(mock, bn)
     orders = _orders_route(mock)
+    _close_routes(mock, btc_free="0.00122")
     mock.delete(host=DEMO, path="/api/v3/orderList").respond(
         400, json={"code": -2011, "msg": "Unknown order sent."})
-    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00122"))
     bn.close_position("t1")
     assert _params(orders.calls.last)["side"] == "SELL"
+    assert bn.positions() == []
+
+
+# --- C3 : jamais « fermée » sans vente constatée ---------------------------------------------
+
+def test_close_with_zero_sellable_quantity_is_inconsistent_not_closed(mock, bn):
+    _open(mock, bn)
+    orders = _orders_route(mock)
+    _close_routes(mock, btc_free="0")
+    with pytest.raises(PositionInconsistent):
+        bn.close_position("t1")
+    assert _params(orders.calls.last)["side"] == "BUY"      # aucune vente envoyée
+    [pos] = bn.positions()
+    assert pos["status"] == "inconsistent"
+
+
+def test_close_with_partially_locked_balance_sells_free_part_and_flags(mock, bn):
+    _open(mock, bn)
+    orders = _orders_route(mock)
+    _close_routes(mock, btc_free="0.0006")
+    with pytest.raises(PositionInconsistent, match="partielle"):
+        bn.close_position("t1")
+    assert _params(orders.calls.last)["quantity"] == "0.0006"
+    [pos] = bn.positions()
+    assert pos["status"] == "inconsistent" and pos["qty"] == pytest.approx(0.00062)
+
+
+def test_close_with_refused_sell_is_inconsistent(mock, bn):
+    _open(mock, bn)
+    _orders_route(mock, sell=httpx.Response(400, json={"code": -2010, "msg": "Insufficient"}))
+    _close_routes(mock, btc_free="0.00122")
+    with pytest.raises(PositionInconsistent, match="refusée"):
+        bn.close_position("t1")
+    assert bn.positions()[0]["status"] == "inconsistent"
+
+
+def test_close_when_oco_already_executed_sells_nothing(mock, bn):
+    _open(mock, bn)
+    orders = _orders_route(mock)
+    _close_routes(mock, btc_free="0", oco={
+        "listOrderStatus": "ALL_DONE",
+        "orders": [{"symbol": "BTCUSDT", "orderId": 7}, {"symbol": "BTCUSDT", "orderId": 8}]})
+    mock.get(host=DEMO, path="/api/v3/order").mock(side_effect=[
+        httpx.Response(200, json={"orderId": 7, "status": "EXPIRED", "executedQty": "0"}),
+        httpx.Response(200, json={"orderId": 8, "status": "FILLED", "executedQty": "0.00122"}),
+    ])
+    bn.close_position("t1")
+    assert _params(orders.calls.last)["side"] == "BUY"      # aucune vente en double
+    assert bn.positions() == []
+
+
+def test_close_refused_while_robot_orders_still_open(mock, bn):
+    _open(mock, bn)
+    _orders_route(mock)
+    _close_routes(mock, btc_free="0.00122", open_orders=[{"clientOrderId": "t1-o1b"}])
+    with pytest.raises(PositionInconsistent, match="encore ouvert"):
+        bn.close_position("t1")
 
 
 def test_baseline_snapshot_and_equity_ignore_personal_assets(mock, bn):
