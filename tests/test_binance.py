@@ -428,3 +428,50 @@ def test_demo_and_live_urls_from_settings():
     assert bn.market_data_url == "https://api.binance.com"
     with pytest.raises(BrokerError, match="absentes"):
         BinanceSpot.from_settings(s, {})
+
+
+# --- C4 : redémarrage avec une position ouverte ---------------------------------------------
+
+def test_restart_keeps_position_managed_and_personal_assets_untouched(mock, tmp_path):
+    from tradebot.journal import Journal
+
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    account = mock.get(host=DEMO, path="/api/v3/account").respond(
+        json=_account(btc_free="0.5", usdt="100"))
+    first = BinanceSpot("cle", SECRET, f"https://{DEMO}", f"https://{LIVE}",
+                        client=httpx.Client(), sleep=lambda s: None, clock=lambda: NOW)
+    assert first.ensure_baseline(journal) == {"BTC": 0.5, "USDT": 100.0}
+    _orders_route(mock)
+    mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(json={})
+    pid = first.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    pos = first.position(pid)
+    journal.open_position(pid, "binance", "BTCUSDT", "buy", pos["qty"], pos["entry"],
+                          pos["stop"], pos["target"], client_id="t1")
+    journal.set_protection(pid, pos["oco_id"])
+    calls_before = account.call_count
+
+    # --- redémarrage : nouvelle instance, mêmes données du journal ---
+    second = BinanceSpot("cle", SECRET, f"https://{DEMO}", f"https://{LIVE}",
+                         client=httpx.Client(), sleep=lambda s: None, clock=lambda: NOW)
+    assert second.ensure_baseline(journal) == {"BTC": 0.5, "USDT": 100.0}
+    assert account.call_count == calls_before          # relu, jamais recalculé
+    for row in journal.open_positions():
+        second.adopt_journal_row(row)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(json={"listOrderStatus": "EXECUTING"})
+    assert second.ensure_stop(pid) == "ok"               # toujours protégée
+
+    # fermeture : seule la quantité suivie est vendue, jamais le BTC personnel
+    orders = _orders_route(mock)
+    mock.delete(host=DEMO, path="/api/v3/orderList").respond(json={})
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(400, json=NOT_FOUND)
+    mock.get(host=DEMO, path="/api/v3/openOrders").respond(json=[])
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.50122"))
+    second.close_position(pid)
+    assert _params(orders.calls.last)["quantity"] == "0.00122"
+
+
+def test_untracked_balance_is_detected(mock, bn):
+    _open(mock, bn)
+    bn.baseline = {"BTC": 0.5}
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.60122"))
+    assert bn.untracked_balances() == {"BTC": pytest.approx(0.1)}

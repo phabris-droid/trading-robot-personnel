@@ -272,17 +272,39 @@ class BinanceSpot(Broker):
         return {b["asset"]: (float(b["free"]), float(b["locked"])) for b in acc["balances"]}
 
     def snapshot_baseline(self) -> dict[str, float]:
-        """À appeler au premier démarrage : ces avoirs (personnels) sont ensuite ignorés."""
+        """Relevé des avoirs actuels (personnels). Utiliser ensure_baseline() : le relevé ne
+        doit être fait qu'au PREMIER démarrage du mode, puis relu depuis le journal."""
         self.baseline = {a: free + locked for a, (free, locked) in self.balances().items()
                          if free + locked > 0}
         return dict(self.baseline)
 
-    def _robot_free(self, asset: str, balances: dict | None = None) -> float:
-        """Quantité libre appartenant au robot : les avoirs présents au démarrage
-        (personnels, supposés libres) sont déduits."""
-        free, _locked = (balances or self.balances()).get(asset, (0.0, 0.0))
-        robot = Decimal(str(free)) - Decimal(str(self.baseline.get(asset, 0.0)))
-        return max(0.0, float(robot))   # calcul décimal : pas d'erreur d'arrondi binaire
+    def ensure_baseline(self, journal) -> dict[str, float]:
+        """Avoirs de départ : relus depuis le journal, ou relevés et enregistrés une seule
+        fois au premier démarrage. Jamais recalculés après un redémarrage (CDC §6)."""
+        saved = journal.baseline()
+        if saved is None:
+            saved = self.snapshot_baseline()
+            journal.save_baseline(saved)
+        self.baseline = dict(saved)
+        return dict(saved)
+
+    def untracked_balances(self) -> dict[str, float]:
+        """Avoirs inexpliqués (ni personnels au départ, ni positions suivies) : signe d'un
+        ordre perdu, la réconciliation met alors le robot en pause (CDC §6)."""
+        held: dict[str, Decimal] = {}
+        for pos in self._positions.values():
+            if pos.status != "closed":
+                asset = self.filters(pos.symbol).base_asset
+                held[asset] = held.get(asset, Decimal(0)) + Decimal(str(pos.qty))
+        out = {}
+        for asset, (free, locked) in self.balances().items():
+            if asset in {self.filters(p.symbol).quote_asset for p in self._positions.values()}:
+                continue
+            extra = (Decimal(str(free + locked)) - Decimal(str(self.baseline.get(asset, 0.0)))
+                     - held.get(asset, Decimal(0)))
+            if extra > 0:
+                out[asset] = float(extra)
+        return out
 
     def equity(self) -> float:
         """Capital du robot : USDT + valeur des positions suivies (avoirs personnels exclus)."""
@@ -435,7 +457,8 @@ class BinanceSpot(Broker):
             return "ok"
         # OCO absent ou terminé : détient-on encore l'actif ?
         f = self.filters(pos.symbol)
-        held = f.floor_qty(min(pos.qty, self._robot_free(f.base_asset)))
+        free, _locked = self.balances().get(f.base_asset, (0.0, 0.0))
+        held = f.floor_qty(min(pos.qty, free))      # quantité suivie, plafonnée au solde libre
         if held < f.min_qty or held <= 0:
             pos.status = "closed"           # stop ou objectif exécuté chez la plateforme
             return "closed_by_platform"
@@ -480,9 +503,22 @@ class BinanceSpot(Broker):
         self._sell(pos, f.floor_qty(min(pos.qty, free)))
 
     def adopt(self, position: dict) -> None:
-        """Reprend une position du journal après un redémarrage."""
+        """Reprend une position (format de positions()) après un redémarrage."""
         pos = BinancePosition(**position)
         self._positions[pos.id] = pos
+
+    def adopt_journal_row(self, row: dict) -> None:
+        """Reprend une position ouverte du journal : quantité, stop, objectif et OCO suivis."""
+        ref = row.get("protection_ref") or ""
+        seq = int(ref.rsplit("-o", 1)[1]) if "-o" in ref and ref.rsplit("-o", 1)[1].isdigit() else 0
+        self.adopt({"id": row["id"], "symbol": row["market"], "qty": row["qty"],
+                    "entry": row["entry"], "stop": row["stop"], "target": row["target"],
+                    "client_id": row["client_id"], "oco_id": ref, "oco_seq": seq,
+                    "status": "open" if ref else "unprotected"})
+
+    def position(self, position_id: str) -> dict | None:
+        pos = self._positions.get(position_id)
+        return asdict(pos) if pos else None
 
     def positions(self) -> list[dict]:
         return [asdict(p) for p in self._positions.values() if p.status != "closed"]

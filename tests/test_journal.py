@@ -289,3 +289,27 @@ def test_stop_update_only_on_open_position(db):
     j.close_position("p1", 104.0, "objectif")
     j.update_stop("p1", 50.0)
     assert j.position("p1")["stop"] == 99.0
+
+
+# --- C4 : avoirs de départ enregistrés une seule fois ---------------------------------------
+
+def test_baseline_is_saved_once_and_survives_restart(db):
+    j = Journal(db, "demo")
+    assert j.baseline() is None
+    j.save_baseline({"BTC": 0.5, "USDT": 100.0})
+    j.save_baseline({"BTC": 9.9})            # second relevé : ignoré
+    j.close()
+    assert Journal(db, "demo").baseline() == {"BTC": 0.5, "USDT": 100.0}
+
+
+def test_empty_baseline_is_still_recorded(db):
+    j = Journal(db, "demo")
+    j.save_baseline({})
+    assert j.baseline() == {}
+
+
+def test_protection_reference_is_kept(db):
+    j = Journal(db, "demo")
+    _open_pos(j)
+    j.set_protection("p1", "p1-o2")
+    assert j.open_positions()[0]["protection_ref"] == "p1-o2"

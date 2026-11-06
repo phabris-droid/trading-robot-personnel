@@ -113,6 +113,15 @@ MIGRATIONS: list[str] = [
     CREATE INDEX idx_events_ts ON events (ts);
     CREATE INDEX idx_equity_platform ON equity (platform, ts);
     """,
+    # v3 : avoirs présents au premier démarrage (personnels, ignorés) et référence du stop
+    #      posé chez la plateforme (OCO Binance) pour reprendre la protection au redémarrage
+    """
+    CREATE TABLE baseline (
+        asset TEXT PRIMARY KEY,
+        amount REAL NOT NULL CHECK (amount >= 0)
+    );
+    ALTER TABLE positions ADD COLUMN protection_ref TEXT NOT NULL DEFAULT '';
+    """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -417,6 +426,11 @@ class Journal:
              self._now()),
             critical=True))
 
+    def set_protection(self, position_id: str, ref: str) -> None:
+        """Référence du stop chez la plateforme (ex. listClientOrderId de l'OCO)."""
+        self._write(_Op("UPDATE positions SET protection_ref=? WHERE id=?",
+                        (ref, position_id), critical=True))
+
     def open_positions(self) -> list[dict]:
         return self._read("SELECT * FROM positions WHERE closed_ts IS NULL ORDER BY opened_ts")
 
@@ -426,6 +440,27 @@ class Journal:
 
     def recent_trades(self, limit: int = 50) -> list[dict]:
         return self._read("SELECT * FROM trades ORDER BY ts DESC, rowid DESC LIMIT ?", (limit,))
+
+    # -- avoirs de départ (CDC §6 : avoirs personnels ignorés) -------------------------------
+
+    def baseline(self) -> dict[str, float] | None:
+        """Avoirs relevés au premier démarrage de ce mode, ou None s'ils ne l'ont jamais été."""
+        if not self._read("SELECT value FROM meta WHERE key='baseline_ts'"):
+            return None
+        return {r["asset"]: r["amount"] for r in self._read("SELECT asset, amount FROM baseline")}
+
+    def save_baseline(self, amounts: dict[str, float]) -> None:
+        """Enregistre les avoirs de départ UNE SEULE FOIS : un second appel est sans effet."""
+        for asset, amount in amounts.items():
+            _check_finite(**{asset: amount})
+        ops = [_Op("INSERT INTO baseline (asset, amount) SELECT ?, ? "
+                   "WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key='baseline_ts') "
+                   "ON CONFLICT(asset) DO NOTHING",
+                   (asset, float(amount)), critical=True)
+               for asset, amount in sorted(amounts.items())]
+        ops.append(_Op("INSERT INTO meta (key, value) VALUES ('baseline_ts', ?) "
+                       "ON CONFLICT(key) DO NOTHING", (str(self._now()),), critical=True))
+        self._write(*ops)
 
     # -- capital et événements ---------------------------------------------------------------
 
