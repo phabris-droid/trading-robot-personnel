@@ -13,8 +13,11 @@ def rsi(close: pd.Series, n: int = 14) -> pd.Series:
     d = close.diff()
     up = d.clip(lower=0).ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
     down = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
-    rs = up / down.replace(0, np.nan)
-    return (100 - 100 / (1 + rs)).fillna(100)
+    out = 100 - 100 / (1 + up / down.replace(0, np.nan))
+    # aucune baisse sur la période : 100 (ou 50 si aucun mouvement du tout) ;
+    # pendant la période de chauffe, le RSI reste NaN (inconnu, jamais « suracheté »)
+    out = out.mask((down == 0) & (up > 0), 100.0)
+    return out.mask((down == 0) & (up == 0), 50.0)
 
 
 def true_range(df: pd.DataFrame) -> pd.Series:

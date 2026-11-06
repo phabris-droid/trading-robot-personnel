@@ -66,8 +66,14 @@ analysts:
     event_window_min: 30
     high_impact_news_hours: 2
     shock_candle_atr: 3.0
-    feed_max_bytes: 2097152
-    feed_timeout_s: 20
+    feed_max_bytes: 2097152        # CDC §8 : 2 Mo maximum
+    feed_timeout_s: 20             # CDC §8 : 20 s maximum
+    feeds:
+      - https://www.coindesk.com/arc/outboundfeeds/rss/
+      - https://cointelegraph.com/rss
+      - https://www.federalreserve.gov/feeds/press_all.xml
+      - https://www.ecb.europa.eu/rss/press.html
+      - https://www.fxstreet.com/rss/news
   financial:
     resistance_atr: 0.5
     volatility_percentile_max: 97
@@ -82,15 +88,25 @@ analysts:
     loss_streak_total_pause_h: 12
     min_equity: 50
     max_equity_drop_24h_pct: 5.0
+    forex_weekend_start_utc: "fri 20:00"   # forex fermé du vendredi 20 h…
+    forex_weekend_end_utc: "sun 22:15"     # …au dimanche 22 h 15 UTC
   ai:
     enabled: true
     model: claude-haiku-5-5
-    min_reject_confidence: 0.70
+    min_reject_confidence: 0.70    # bornes 0,5 – 1 : l'IA ne fait que bloquer
     max_calls_decisions_per_day: 50
     max_calls_news_per_day: 24
+    timeout_s: 20                  # sans réponse : les règles décident
+
+engine:
+  reconcile_every_cycles: 10       # CDC §6 : réconciliation tous les 10 cycles
+  uncertain_order_pause_minutes: 30
+  emergency_alert_every: 5         # alerte toutes les 5 tentatives d'arrêt d'urgence
+  platform_reconnect_minutes: 5
+  watchdog_minutes: 5              # alerte si aucun cycle depuis 5 min
 
 reports:
-  morning_utc: "07:00"
+  morning_utc: "07:00"             # format HH:MM, UTC
   audit_day: sun
   audit_utc: "18:00"
 

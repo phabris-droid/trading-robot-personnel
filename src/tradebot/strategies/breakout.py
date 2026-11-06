@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from tradebot.strategies.base import Signal
+from tradebot.strategies.base import ExitSignal, Signal
 from tradebot.strategies.indicators import atr
 
 
@@ -22,4 +22,18 @@ def breakout(df: pd.DataFrame, p: dict, sides: list[str], atr_n: int = 14) -> Si
     if "sell" in sides and price < prev["low"].min():
         return Signal("sell", price, price + p["stop_atr"] * atr_now,
                       price - p["target_atr"] * atr_now, "cassure baissière")
+    return None
+
+
+def should_exit(df: pd.DataFrame, position: dict, p: dict, atr_n: int = 14) -> ExitSignal | None:
+    """Sortie anticipée : clôture sous le plus bas des 10 bougies précédentes (achat),
+    au-dessus du plus haut des 10 précédentes (vente)."""
+    n = p["exit_lookback"]
+    if len(df) < n + 1:
+        return None
+    prev, price = df.iloc[-n - 1:-1], df["close"].iloc[-1]
+    if position["side"] == "buy" and price < prev["low"].min():
+        return ExitSignal(f"clôture sous le plus bas des {n} bougies")
+    if position["side"] == "sell" and price > prev["high"].max():
+        return ExitSignal(f"clôture au-dessus du plus haut des {n} bougies")
     return None

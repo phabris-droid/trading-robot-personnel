@@ -1,6 +1,6 @@
 from tradebot.risk.sizing import position_size
 
-KW = dict(risk_pct=1, max_pos_pct=25, small_account_max_pct=3, max_spread_to_stop=0.25)
+KW = {"risk_pct": 1, "max_pos_pct": 25, "small_account_max_pct": 3, "max_spread_to_stop": 0.25}
 
 
 def test_one_percent_risk():

@@ -1,29 +1,27 @@
-# Intégration continue : tests + lint + build Docker.
-# Tourne sur chaque push et chaque pull request vers dev / prod / main.
+# Intégration continue : garde-fous, lint, tests, puis démarrage réel du conteneur.
+# - push sur dev            → CI
+# - pull request vers dev/prod → CI
+# - push sur prod           → CI appelée par cd-prod.yml avant le déploiement
 # Aucun test ne touche un vrai compte (réseau simulé par respx) — CLAUDE.md.
 name: CI
 
 on:
   push:
-    branches: [dev, main]   # prod : la CI est lancée par cd-prod.yml avant le déploiement
+    branches: [dev]
   pull_request:
-    branches: [dev, prod, main]
-  workflow_call:        # réutilisé par le pipeline de déploiement (cd-prod.yml)
+    branches: [dev, prod]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   garde-fous:
     name: Garde-fous (secrets, fichiers interdits)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Aucun .env ni base SQLite versionné
         run: |
           interdits=$(git ls-files | grep -E '(^|/)\.env(\..+)?$|\.db$|\.db-(wal|shm)$' \
@@ -41,36 +39,67 @@ jobs:
           fi
 
   tests:
-    name: Tests Python 3.12
+    name: Lint + tests (Python 3.12)
     runs-on: ubuntu-latest
     needs: garde-fous
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Installation
         run: python -m pip install -e ".[dev]"
-      - name: Lint (ruff) — informatif tant que le squelette n'est pas terminé
-        continue-on-error: true
-        run: ruff check src tests scripts
+      - name: Lint (ruff)
+        run: ruff check --output-format=github src tests scripts
       - name: Tests (pytest)
-        run: python -m pytest -q
+        run: |
+          set -o pipefail
+          python -m pytest -q -rfE --tb=short 2>&1 | tee pytest.log
+      - name: Nombre de tests visible dans le résumé
+        if: always()
+        run: |
+          [ -f pytest.log ] && echo "::notice title=pytest::$(tail -n 1 pytest.log)" || true
+      - name: Échecs pytest visibles dans le résumé
+        if: failure()
+        run: |
+          msg=$(grep -E '^(FAILED|ERROR) |^E  |^[^ ]+\.py:[0-9]+: ' pytest.log | head -80 \
+                | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::error title=pytest::${msg:-voir le journal du job}"
 
   docker:
-    name: Build de l'image Docker
+    name: Docker (build + démarrage sans .env)
     runs-on: ubuntu-latest
     needs: tests
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build (sans publication)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: false
-          tags: tradebot:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - uses: actions/checkout@v5
+      - name: Compose valide
+        run: |
+          docker compose config -q
+          # prod exige un .env : on valide avec un .env vide dans un dossier temporaire
+          tmp=$(mktemp -d) && cp docker-compose.prod.yml "$tmp/" && touch "$tmp/.env"
+          docker compose -f "$tmp/docker-compose.prod.yml" config -q
+      - name: Build et démarrage comme un nouvel utilisateur (aucun .env)
+        run: |
+          test ! -f .env
+          docker compose up -d --build
+      - name: Le tableau de bord répond (/health) et le conteneur est sain
+        run: |
+          for i in $(seq 1 30); do
+            etat=$(docker inspect -f '{{.State.Health.Status}}' tradebot 2>/dev/null || echo absent)
+            if [ "$etat" = "healthy" ] && curl -fsS http://127.0.0.1:8080/health; then
+              echo; echo "Conteneur sain"; exit 0
+            fi
+            echo "tentative $i : $etat"; sleep 5
+          done
+          echo "::error::Le conteneur ne devient pas sain"
+          docker compose logs --tail 100
+          exit 1
+      - name: Le conteneur ne redémarre pas en boucle
+        run: |
+          test "$(docker inspect -f '{{.RestartCount}}' tradebot)" = "0"
+          docker compose logs --tail 20
+      - name: Arrêt propre (SIGTERM)
+        if: always()
+        run: docker compose down -v

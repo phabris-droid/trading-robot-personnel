@@ -1,18 +1,27 @@
+# Lancement local (n'importe quelle machine avec Docker) :
+#   docker compose up -d --build      → tableau de bord sur http://127.0.0.1:8080/health
+#   docker compose logs -f            → journaux
+#   docker compose down               → arrêt (les données restent dans le volume)
+# Le fichier .env est FACULTATIF : sans lui, le robot démarre en démo sans clés.
 services:
   tradebot:
     build: .
+    image: tradebot:local
     container_name: tradebot
     restart: unless-stopped
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     read_only: true                 # lecture seule sauf data/
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     mem_limit: 1g
-    user: "10001:10001"
     volumes:
-      - ./data:/app/data
-      - ./config:/app/config:ro
+      - tradebot-data:/app/data     # volume nommé : fonctionne sous Windows, macOS et Linux
     ports:
       - "127.0.0.1:8080:8080"       # jamais exposé directement : tunnel SSH ou Caddy
     stop_grace_period: 90s          # SIGTERM : le cycle en cours se termine
+
+volumes:
+  tradebot-data:
