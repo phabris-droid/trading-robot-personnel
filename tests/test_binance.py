@@ -1,0 +1,361 @@
+"""Client Binance spot (CDC §2, §6) — réseau entièrement simulé par respx."""
+import hashlib
+import hmac
+
+import httpx
+import pytest
+import respx
+
+from tradebot.brokers.base import (
+    BrokerError,
+    BrokerUnavailable,
+    OrderRejected,
+    OrderUncertain,
+    RateLimited,
+    StopNotPlaced,
+)
+from tradebot.brokers.binance import BinanceSpot
+
+DEMO = "demo-api.binance.com"
+LIVE = "api.binance.com"
+NOW = 1_700_000_000.0          # horloge figée (secondes)
+NOW_MS = int(NOW * 1000)
+SECRET = "secret-de-test"
+
+EXCHANGE_INFO = {"symbols": [{
+    "symbol": "BTCUSDT", "baseAsset": "BTC", "quoteAsset": "USDT",
+    "filters": [
+        {"filterType": "PRICE_FILTER", "minPrice": "0.01", "maxPrice": "1000000",
+         "tickSize": "0.01"},
+        {"filterType": "LOT_SIZE", "minQty": "0.00001", "maxQty": "9000",
+         "stepSize": "0.00001"},
+        {"filterType": "NOTIONAL", "minNotional": "5.00000000"},
+    ]}]}
+BOOK = {"symbol": "BTCUSDT", "bidPrice": "60000.00", "askPrice": "60001.00"}
+FILL = {"orderId": 1, "clientOrderId": "t1", "status": "FILLED", "executedQty": "0.00123",
+        "cummulativeQuoteQty": "73.80123",
+        "fills": [{"price": "60001.00", "qty": "0.00123", "commission": "0.00000123",
+                   "commissionAsset": "BTC"}]}
+NOT_FOUND = {"code": -2013, "msg": "Order does not exist."}
+
+
+def _account(btc_free="0", btc_locked="0", usdt="100"):
+    return {"balances": [{"asset": "BTC", "free": btc_free, "locked": btc_locked},
+                         {"asset": "USDT", "free": usdt, "locked": "0"}]}
+
+
+@pytest.fixture
+def mock():
+    with respx.mock(assert_all_called=False) as m:
+        m.get(host=DEMO, path="/api/v3/exchangeInfo").respond(json=EXCHANGE_INFO)
+        m.get(host=LIVE, path="/api/v3/ticker/bookTicker").respond(json=BOOK)
+        yield m
+
+
+@pytest.fixture
+def sleeps():
+    return []
+
+
+@pytest.fixture
+def bn(sleeps):
+    return BinanceSpot("cle", SECRET, f"https://{DEMO}", f"https://{LIVE}", 0.5,
+                       client=httpx.Client(), sleep=sleeps.append, clock=lambda: NOW)
+
+
+def _params(call):
+    return dict(call.request.url.params)
+
+
+def _orders_route(mock, buy=None, sell=None):
+    """POST /api/v3/order : réponse différente pour l'achat et la vente."""
+    def handler(request):
+        side = request.url.params["side"]
+        resp = buy if side == "BUY" else sell
+        if isinstance(resp, Exception):
+            raise resp
+        return resp or httpx.Response(200, json={**FILL, "side": side})
+    return mock.post(host=DEMO, path="/api/v3/order").mock(side_effect=handler)
+
+
+# --- signature et horloge -------------------------------------------------------------------
+
+def test_signature_example_from_binance_documentation():
+    secret = "NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j"
+    query = ("symbol=LTCBTC&side=BUY&type=LIMIT&timeInForce=GTC&quantity=1&price=0.1"
+             "&recvWindow=5000&timestamp=1499827319559")
+    bn = BinanceSpot("k", secret, "https://x", "https://y")
+    assert bn.sign(query) == "c8db56825ae71d6d79447849e617115f4a920fa2acdcadb9c4d6b5d2df8f1a44"
+
+
+def test_signed_request_carries_key_timestamp_and_valid_signature(mock, bn):
+    route = mock.get(host=DEMO, path="/api/v3/account").respond(json=_account())
+    bn.balances()
+    req = route.calls.last.request
+    assert req.headers["X-MBX-APIKEY"] == "cle"
+    query, signature = req.url.query.decode().rsplit("&signature=", 1)
+    assert signature == hmac.new(SECRET.encode(), query.encode(), hashlib.sha256).hexdigest()
+    params = _params(route.calls.last)
+    assert params["timestamp"] == str(NOW_MS) and params["recvWindow"] == "5000"
+
+
+def test_clock_is_synchronised_on_server_time(mock, bn):
+    mock.get(host=DEMO, path="/api/v3/time").respond(json={"serverTime": NOW_MS + 1500})
+    route = mock.get(host=DEMO, path="/api/v3/account").respond(json=_account())
+    bn.sync_time()
+    bn.balances()
+    assert _params(route.calls.last)["timestamp"] == str(NOW_MS + 1500)
+
+
+def test_timestamp_error_resyncs_and_retries_once(mock, bn):
+    mock.get(host=DEMO, path="/api/v3/time").respond(json={"serverTime": NOW_MS + 9000})
+    route = mock.get(host=DEMO, path="/api/v3/account").mock(side_effect=[
+        httpx.Response(400, json={"code": -1021, "msg": "Timestamp outside recvWindow"}),
+        httpx.Response(200, json=_account()),
+    ])
+    assert bn.balances()["USDT"] == (100.0, 0.0)
+    assert route.call_count == 2
+
+
+def test_secrets_never_in_repr(bn):
+    assert SECRET not in repr(bn) and "cle" not in repr(bn)
+
+
+# --- bougies (vrai marché, bougies clôturées uniquement) ------------------------------------
+
+def test_unclosed_candle_is_excluded_and_prices_come_from_real_market(mock, bn):
+    h = 3_600_000
+    open_last = NOW_MS - NOW_MS % h       # bougie en cours
+    rows = [[open_last - 2 * h, "1", "2", "0.5", "1.5", "10", open_last - h - 1],
+            [open_last - h, "1.5", "3", "1", "2.5", "20", open_last - 1],
+            [open_last, "2.5", "4", "2", "3.5", "5", open_last + h - 1]]
+    route = mock.get(host=LIVE, path="/api/v3/klines").respond(json=rows)
+    df = bn.candles("BTCUSDT", limit=10)
+    assert list(df["close"]) == [1.5, 2.5]
+    assert df["close_ts"].iloc[-1] == open_last // 1000
+    assert _params(route.calls.last)["interval"] == "1h"
+
+
+# --- arrondis et filtres --------------------------------------------------------------------
+
+def test_quantity_and_prices_are_rounded_to_symbol_filters(mock, bn):
+    buy = _orders_route(mock)
+    oco = mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(
+        json={"listClientOrderId": "t1-o1", "listOrderStatus": "EXECUTING"})
+    bn.open_position("BTCUSDT", "buy", 0.0012345678, 59000.004, 61000.009, "t1")
+    assert _params(buy.calls.last)["quantity"] == "0.00123"
+    p = _params(oco.calls.last)
+    assert p["side"] == "SELL"
+    assert p["quantity"] == "0.00122"            # frais prélevés en BTC déduits
+    assert p["belowStopPrice"] == "59000.01"     # stop arrondi vers l'entrée
+    assert p["belowPrice"] == "58705"            # stop-limit 0,5 % sous le stop
+    assert p["abovePrice"] == "61000"
+    assert p["belowType"] == "STOP_LOSS_LIMIT" and p["aboveType"] == "LIMIT_MAKER"
+
+
+def test_order_below_minimum_notional_is_refused_before_sending(mock, bn):
+    buy = _orders_route(mock)
+    with pytest.raises(OrderRejected, match="minimum"):
+        bn.open_position("BTCUSDT", "buy", 0.00005, 59000, 61000, "t1")   # ~3 $
+    assert buy.call_count == 0
+
+
+def test_short_selling_and_bad_stop_are_refused(bn):
+    with pytest.raises(ValueError, match="achat uniquement"):
+        bn.open_position("BTCUSDT", "sell", 0.001, 61000, 59000, "t1")
+
+
+def test_stop_above_price_is_refused(mock, bn):
+    with pytest.raises(ValueError, match="stop < prix"):
+        bn.open_position("BTCUSDT", "buy", 0.001, 60500, 61000, "t1")
+
+
+# --- OCO ------------------------------------------------------------------------------------
+
+def test_oco_is_placed_right_after_the_buy(mock, bn):
+    _orders_route(mock)
+    oco = mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(json={})
+    pid = bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert oco.call_count == 1
+    [pos] = bn.positions()
+    assert pos["id"] == pid and pos["status"] == "open" and pos["oco_id"] == "t1-o1"
+    assert pos["qty"] == pytest.approx(0.00122)
+    assert pos["entry"] == pytest.approx(73.80123 / 0.00123)
+
+
+def test_oco_failure_sells_immediately(mock, bn):
+    orders = _orders_route(mock)
+    mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(
+        400, json={"code": -2010, "msg": "Stop price would trigger immediately."})
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00122"))
+    with pytest.raises(StopNotPlaced) as exc:
+        bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert exc.value.closed is True
+    sell = _params(orders.calls.last)
+    assert sell["side"] == "SELL" and sell["quantity"] == "0.00122"
+    assert sell["newClientOrderId"] == "t1-x1"
+    assert bn.positions() == []
+
+
+def test_oco_failure_and_sell_failure_is_reported_as_not_closed(mock, bn):
+    _orders_route(mock, sell=httpx.ReadTimeout("délai dépassé"))
+    mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(400, json={"code": -2010})
+    with pytest.raises(StopNotPlaced) as exc:
+        bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert exc.value.closed is False
+    assert bn.positions()[0]["status"] == "unprotected"
+
+
+def _open(mock, bn):
+    _orders_route(mock)
+    oco = mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(json={})
+    bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    return oco
+
+
+def test_ensure_stop_ok_when_oco_active(mock, bn):
+    _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(json={"listOrderStatus": "EXECUTING"})
+    assert bn.ensure_stop("t1") == "ok"
+
+
+def test_missing_oco_is_placed_again(mock, bn):
+    oco = _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(400, json=NOT_FOUND)
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00122"))
+    assert bn.ensure_stop("t1") == "replaced"
+    assert oco.call_count == 2
+    assert _params(oco.calls.last)["listClientOrderId"] == "t1-o2"
+    assert bn.positions()[0]["status"] == "open"
+
+
+def test_missing_oco_that_cannot_be_replaced_sells(mock, bn):
+    _open(mock, bn)
+    orders = _orders_route(mock)
+    mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(400, json={"code": -2010})
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(400, json=NOT_FOUND)
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00122"))
+    assert bn.ensure_stop("t1") == "closed_no_stop"
+    assert _params(orders.calls.last)["side"] == "SELL"
+
+
+def test_oco_executed_means_position_closed_by_platform(mock, bn):
+    _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(json={"listOrderStatus": "ALL_DONE"})
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0"))
+    assert bn.ensure_stop("t1") == "closed_by_platform"
+    assert bn.positions() == []
+
+
+# --- ordres au statut incertain : jamais renvoyés -------------------------------------------
+
+def test_timeout_on_send_is_uncertain_and_never_resent(mock, bn):
+    route = mock.post(host=DEMO, path="/api/v3/order").mock(
+        side_effect=httpx.ReadTimeout("délai dépassé"))
+    with pytest.raises(OrderUncertain) as exc:
+        bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert exc.value.client_id == "t1"
+    assert route.call_count == 1
+
+
+def test_server_error_on_send_is_uncertain_and_never_resent(mock, bn):
+    route = mock.post(host=DEMO, path="/api/v3/order").respond(503)
+    with pytest.raises(OrderUncertain):
+        bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert route.call_count == 1
+
+
+def test_rate_limit_on_order_is_a_certain_refusal(mock, bn):
+    route = mock.post(host=DEMO, path="/api/v3/order").respond(429)
+    with pytest.raises(RateLimited):
+        bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert route.call_count == 1
+
+
+def test_connection_refused_means_order_not_sent(mock, bn):
+    mock.post(host=DEMO, path="/api/v3/order").mock(side_effect=httpx.ConnectError("refus"))
+    with pytest.raises(BrokerUnavailable):
+        bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+
+
+def test_uncertain_order_is_found_by_client_id(mock, bn):
+    route = mock.get(host=DEMO, path="/api/v3/order").mock(side_effect=[
+        httpx.Response(200, json={"clientOrderId": "t1", "status": "FILLED"}),
+        httpx.Response(400, json=NOT_FOUND),
+    ])
+    assert bn.find_order("t1", "BTCUSDT")["status"] == "FILLED"
+    assert bn.find_order("t2", "BTCUSDT") is None
+    assert _params(route.calls[0])["origClientOrderId"] == "t1"
+
+
+def test_uncertain_oco_is_checked_before_selling(mock, bn):
+    _orders_route(mock)
+    mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(502)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(json={"listOrderStatus": "EXECUTING"})
+    bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert bn.positions()[0]["status"] == "open"
+
+
+# --- nouvelles tentatives sur les lectures --------------------------------------------------
+
+def test_reads_are_retried_with_backoff_on_5xx_and_429(mock, bn, sleeps):
+    route = mock.get(host=DEMO, path="/api/v3/account").mock(side_effect=[
+        httpx.Response(503),
+        httpx.Response(429, headers={"Retry-After": "3"}),
+        httpx.Response(200, json=_account()),
+    ])
+    bn.balances()
+    assert route.call_count == 3
+    assert sleeps == [0.5, 3.0]
+
+
+def test_reads_give_up_after_max_retries(mock, bn):
+    mock.get(host=DEMO, path="/api/v3/account").respond(500)
+    with pytest.raises(BrokerUnavailable):
+        bn.balances()
+
+
+# --- fermeture et avoirs personnels ---------------------------------------------------------
+
+def test_close_cancels_oco_then_sells_only_robot_quantity(mock, bn):
+    _open(mock, bn)
+    orders = _orders_route(mock)
+    cancel = mock.delete(host=DEMO, path="/api/v3/orderList").respond(json={})
+    # 0,5 BTC personnel présent au démarrage + 0,00122 BTC du robot
+    bn.baseline = {"BTC": 0.5}
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.50122"))
+    bn.close_position("t1")
+    assert cancel.call_count == 1
+    assert _params(cancel.calls.last)["listClientOrderId"] == "t1-o1"
+    sell = _params(orders.calls.last)
+    assert sell["side"] == "SELL" and sell["quantity"] == "0.00122"
+    assert bn.positions() == []
+
+
+def test_close_continues_if_oco_already_gone(mock, bn):
+    _open(mock, bn)
+    orders = _orders_route(mock)
+    mock.delete(host=DEMO, path="/api/v3/orderList").respond(
+        400, json={"code": -2011, "msg": "Unknown order sent."})
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00122"))
+    bn.close_position("t1")
+    assert _params(orders.calls.last)["side"] == "SELL"
+
+
+def test_baseline_snapshot_and_equity_ignore_personal_assets(mock, bn):
+    mock.get(host=DEMO, path="/api/v3/account").respond(
+        json=_account(btc_free="0.5", usdt="100"))
+    assert bn.snapshot_baseline() == {"BTC": 0.5, "USDT": 100.0}
+    assert bn.equity() == pytest.approx(100.0)       # le BTC personnel n'est pas compté
+
+
+def test_demo_and_live_urls_from_settings():
+    from tradebot.settings import load_settings
+
+    s = load_settings("config/config.yaml")
+    env = {"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"}
+    bn = BinanceSpot.from_settings(s, env)
+    assert bn.trading_url == "https://demo-api.binance.com"
+    assert bn.market_data_url == "https://api.binance.com"
+    with pytest.raises(BrokerError, match="absentes"):
+        BinanceSpot.from_settings(s, {})
