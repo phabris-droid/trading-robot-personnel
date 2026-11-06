@@ -42,6 +42,7 @@ from tradebot.brokers.base import (
     Broker,
     BrokerError,
     BrokerUnavailable,
+    IpBanned,
     OrderRejected,
     OrderUncertain,
     PositionInconsistent,
@@ -102,6 +103,8 @@ class BinancePosition:
 
 
 RETRY_AFTER_MAX_S = 60.0
+BAN_DEFAULT_S = 300.0             # 418 sans durée indiquée : 5 min sans aucune requête
+BAN_MAX_S = 3 * 24 * 3600.0
 
 
 def parse_retry_after(value: str | None, now: float, default: float = 1.0,
@@ -163,6 +166,7 @@ class BinanceSpot(Broker):
         self._sleep = sleep
         self._clock = clock
         self._offset_ms = 0
+        self.banned_until = 0.0        # horodatage de fin de bannissement (HTTP 418)
         self._filters: dict[str, SymbolFilters] = {}
         self._positions: dict[str, BinancePosition] = {}
         self.baseline: dict[str, float] = dict(baseline or {})
@@ -197,6 +201,8 @@ class BinanceSpot(Broker):
         attempt, resynced = 0, False
         while True:
             attempt += 1
+            if self._clock() < self.banned_until:   # 418 : plus aucune requête n'est envoyée
+                raise IpBanned(self.banned_until)
             p = {k: v for k, v in (params or {}).items() if v is not None}
             if signed:
                 p["timestamp"] = self._now_ms()
@@ -224,7 +230,13 @@ class BinanceSpot(Broker):
                 continue
 
             status = resp.status_code
-            if status in (429, 418):
+            if status == 418:
+                # IP bannie : on coupe TOUT pendant la durée indiquée (sinon 5 min)
+                now = self._clock()
+                self.banned_until = now + parse_retry_after(
+                    resp.headers.get("Retry-After"), now, default=BAN_DEFAULT_S, cap=BAN_MAX_S)
+                raise IpBanned(self.banned_until)
+            if status == 429:
                 if kind == "order" or attempt >= self.max_retries:
                     raise RateLimited(f"Binance : limite de requêtes (HTTP {status})")
                 wait = parse_retry_after(resp.headers.get("Retry-After"), self._clock(),

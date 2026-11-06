@@ -548,3 +548,37 @@ def test_garbage_retry_after_header_does_not_crash(mock, bn, sleeps):
     ])
     bn.balances()
     assert sleeps == [0.5]
+
+
+# --- m2 : HTTP 418 ---------------------------------------------------------------------------
+
+def test_ip_ban_stops_every_request_for_the_given_duration(mock):
+    from tradebot.brokers.base import IpBanned
+
+    t = {"now": NOW}
+    bn = BinanceSpot("cle", SECRET, f"https://{DEMO}", f"https://{LIVE}",
+                     client=httpx.Client(), sleep=lambda s: None, clock=lambda: t["now"])
+    route = mock.get(host=DEMO, path="/api/v3/account").mock(side_effect=[
+        httpx.Response(418, headers={"Retry-After": "120"}),
+        httpx.Response(200, json=_account()),
+    ])
+    with pytest.raises(IpBanned):
+        bn.balances()
+    assert bn.banned_until == NOW + 120
+    t["now"] += 100
+    with pytest.raises(IpBanned):
+        bn.balances()                     # aucune requête envoyée pendant le bannissement
+    with pytest.raises(IpBanned):
+        bn.quote("BTCUSDT")
+    assert route.call_count == 1
+    t["now"] += 30
+    assert bn.balances()["USDT"] == (100.0, 0.0)
+
+
+def test_ip_ban_without_duration_lasts_5_minutes(mock, bn):
+    from tradebot.brokers.base import IpBanned
+
+    mock.get(host=DEMO, path="/api/v3/account").respond(418)
+    with pytest.raises(IpBanned):
+        bn.balances()
+    assert bn.banned_until == NOW + 300

@@ -260,3 +260,15 @@ def test_software_stop_closes_position(tmp_path, side, quote_hits_stop):
                           client_id="s1")
     eng.cycle()
     assert broker.pos["s1"]["closed"] is quote_hits_stop
+
+
+def test_ip_ban_blocks_new_entries_and_alerts(tmp_path):
+    broker = FakeBroker(DATA)
+    eng, journal, alerts = _engine(tmp_path, broker)
+    eng.cycle()
+    broker.banned_until = float(eng._clock()) + 3600
+    broker.i += 50                                  # nouvelles bougies pendant le bannissement
+    calls = list(broker.open_calls)
+    eng.cycle()
+    assert broker.open_calls == calls
+    assert any(lvl == "critical" and "418" in msg for lvl, msg in alerts)

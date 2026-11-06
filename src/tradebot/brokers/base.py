@@ -21,6 +21,14 @@ class RateLimited(BrokerError):
     """Limite de requêtes atteinte (429/418) : la requête a été refusée, rien n'est exécuté."""
 
 
+class IpBanned(RateLimited):
+    """HTTP 418 : adresse IP bannie. Plus AUCUNE requête jusqu'à `until` (horodatage s)."""
+
+    def __init__(self, until: float, message: str = ""):
+        super().__init__(message or f"IP bannie par la plateforme jusqu'à {until:.0f}")
+        self.until = until
+
+
 class ApiError(BrokerError):
     """Réponse d'erreur explicite de la plateforme."""
 

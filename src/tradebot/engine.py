@@ -131,8 +131,11 @@ class Engine:
         self._read_equity()
         self._resolve_uncertain(now)
         self._manage_positions()
+        banned = {name for name in self.brokers if self._banned(name, now)}
         for market in self.settings.markets:
             if not market.enabled or market.platform not in self.brokers:
+                continue
+            if market.platform in banned:            # HTTP 418 : aucune nouvelle entrée
                 continue
             try:                                   # une erreur sur un marché est isolée
                 self._decide(market)
@@ -142,6 +145,14 @@ class Engine:
         if self.cycles % self.settings.engine.reconcile_every_cycles == 0:
             self._reconcile()
         self.last_cycle_ts = now                   # battement de cœur
+
+    def _banned(self, name: str, now: int) -> bool:
+        until = getattr(self.brokers.get(name), "banned_until", 0) or 0
+        if until > now:
+            self.alert("critical", f"{name} : IP bannie (HTTP 418) jusqu'à {until:.0f}, "
+                                   "aucune nouvelle entrée", key=f"ban:{name}")
+            return True
+        return False
 
     # --- étapes du cycle --------------------------------------------------------------------
 
