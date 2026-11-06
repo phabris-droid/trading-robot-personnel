@@ -550,13 +550,15 @@ jobs:
           mkdir -p /tmp/live && cp config/config.yaml /tmp/live/
           sed -i 's/^mode: demo/mode: live/' /tmp/live/config.yaml
           grep -q '^mode: live' /tmp/live/config.yaml
-          for env in "" "-e CONFIRM_LIVE_TRADING=OUI -e DASHBOARD_PASSWORD=court"; do
-            # shellcheck disable=SC2086
-            rc=0; docker run --rm $env -v /tmp/live:/app/config:ro tradebot:local > out.txt 2>&1 || rc=$?
+          doit_refuser() {
+            local rc=0
+            docker run --rm "$@" -v /tmp/live:/app/config:ro tradebot:local > out.txt 2>&1 || rc=$?
             cat out.txt
             test "$rc" = "2" || { echo "::error::le mode réel aurait dû être refusé (code $rc)"; exit 1; }
             grep -q "Démarrage refusé" out.txt
-          done
+          }
+          doit_refuser                                            # aucune confirmation
+          doit_refuser -e CONFIRM_LIVE_TRADING=OUI -e DASHBOARD_PASSWORD=court   # mot de passe faible
 
   redemarrage:
     name: 4 · Redémarrage (données conservées, CDC §10 J4)
