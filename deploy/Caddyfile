@@ -1,4 +1,6 @@
-# HTTPS automatique devant le tableau de bord (remplacer le domaine)
-tradebot.example.com {
+# HTTPS automatique devant le tableau de bord (CDC §7–8).
+# Le domaine vient de la variable d'environnement TRADEBOT_DOMAIN (ex. tradebot.mondomaine.fr),
+# jamais écrit en dur. Le tableau de bord reste protégé par son propre mot de passe.
+{$TRADEBOT_DOMAIN} {
     reverse_proxy 127.0.0.1:8080
 }
