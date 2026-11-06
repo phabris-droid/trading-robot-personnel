@@ -127,7 +127,7 @@ class JournalError(Exception):
     """Erreur bloquante : le robot ne doit pas démarrer avec ce journal."""
 
 
-class JournalUnavailable(Exception):  # noqa: N818 — nom imposé par le cahier des charges
+class JournalUnavailable(Exception):
     """Base inaccessible : l'écriture est gardée en mémoire et sera rejouée."""
 
     def __init__(self, cause: str, pending: int) -> None:
