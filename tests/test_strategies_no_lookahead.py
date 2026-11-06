@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from tradebot.settings import load_settings
-from tradebot.strategies import REGISTRY
+from tradebot.strategies import EXITS, REGISTRY
 from tradebot.strategies.indicators import adx, atr, bollinger, ema, rsi
 
 S = load_settings("config/config.yaml").strategies
@@ -91,3 +91,57 @@ def test_rsi_flat_and_rising_series():
     rising = pd.Series(np.arange(40, dtype=float))
     assert rsi(flat, 14).iloc[-1] == 50
     assert rsi(rising, 14).iloc[-1] == 100
+
+
+# --- M4 : sorties anticipées (CDC §3) -------------------------------------------------------
+
+
+
+@pytest.mark.parametrize("side", ["buy", "sell"])
+@pytest.mark.parametrize("name", list(EXITS))
+def test_exit_ignores_future(candles, name, side):
+    fn, params = EXITS[name], S.params(name)
+    for end in range(60, 600, 5):
+        past = fn(candles.iloc[:end], {"side": side}, params, S.atr_period)
+        with_future = _scramble_future(candles, end, seed=end)
+        assert fn(with_future.iloc[:end], {"side": side}, params, S.atr_period) == past
+
+
+@pytest.mark.parametrize("name", list(EXITS))
+def test_exit_needs_enough_candles(candles, name):
+    for end in (1, 2, 5):
+        assert EXITS[name](candles.iloc[:end], {"side": "buy"}, S.params(name),
+                           S.atr_period) is None
+
+
+def _series(closes):
+    closes = np.asarray(closes, dtype=float)
+    return pd.DataFrame({"open": closes, "high": closes + 0.5, "low": closes - 0.5,
+                         "close": closes, "volume": np.ones(len(closes))})
+
+
+def test_trend_exit_on_inverse_crossover():
+    p = S.params("trend_ema")
+    rising_then_falling = _series(list(np.linspace(100, 150, 120)) + list(np.linspace(150, 90, 80)))
+    assert EXITS["trend_ema"](rising_then_falling, {"side": "buy"}, p) is not None
+    assert EXITS["trend_ema"](rising_then_falling, {"side": "sell"}, p) is None
+    rising = _series(np.linspace(100, 150, 120))
+    assert EXITS["trend_ema"](rising, {"side": "buy"}, p) is None
+
+
+def test_mean_reversion_exit_back_to_mean_and_rsi():
+    p = S.params("mean_reversion")
+    flat_then_up = _series([100.0] * 40 + [100.0 + i for i in range(1, 6)])
+    assert EXITS["mean_reversion"](flat_then_up, {"side": "buy"}, p) is not None
+    flat_then_down = _series([100.0] * 40 + [100.0 - i for i in range(1, 6)])
+    assert EXITS["mean_reversion"](flat_then_down, {"side": "sell"}, p) is not None
+    assert EXITS["mean_reversion"](flat_then_down, {"side": "buy"}, p) is None
+
+
+def test_breakout_exit_below_lowest_of_previous_candles():
+    p = S.params("breakout")
+    df = _series([100.0] * 20 + [90.0])
+    assert "plus bas" in EXITS["breakout"](df, {"side": "buy"}, p).reason
+    assert EXITS["breakout"](df, {"side": "sell"}, p) is None
+    up = _series([100.0] * 20 + [110.0])
+    assert "plus haut" in EXITS["breakout"](up, {"side": "sell"}, p).reason
