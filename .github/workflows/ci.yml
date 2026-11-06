@@ -54,7 +54,15 @@ jobs:
       - name: Lint (ruff)
         run: ruff check --output-format=github src tests scripts
       - name: Tests (pytest)
-        run: python -m pytest -q
+        run: |
+          set -o pipefail
+          python -m pytest -q -rfE --tb=short 2>&1 | tee pytest.log
+      - name: Échecs pytest visibles dans le résumé
+        if: failure()
+        run: |
+          msg=$(grep -E '^(FAILED|ERROR) |^E  |^[^ ]+\.py:[0-9]+: ' pytest.log | head -80 \
+                | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::error title=pytest::${msg:-voir le journal du job}"
 
   docker:
     name: Docker (build + démarrage sans .env)
