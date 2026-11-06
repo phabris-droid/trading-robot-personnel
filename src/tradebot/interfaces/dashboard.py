@@ -82,9 +82,41 @@ async def same_origin_only(request: Request, call_next):
     return await call_next(request)
 
 
+class _HealthState:
+    def __init__(self) -> None:
+        self.source: Callable[[], float | None] | None = None   # horodatage du dernier cycle
+        self.max_age_s = 0.0
+        self.clock: Callable[[], float] = time.time
+        self.started = time.time()
+
+
+_health = _HealthState()
+
+
+def configure_health(source: Callable[[], float | None] | None, max_age_s: float,
+                     clock: Callable[[], float] = time.time) -> None:
+    """/health suit le battement de cœur du moteur : moteur bloqué = conteneur malade.
+    `max_age_s` : âge maximal du dernier cycle (chien de garde, CDC §8 : 5 min)."""
+    _health.source, _health.max_age_s, _health.clock = source, max_age_s, clock
+    _health.started = clock()
+
+
 @app.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
+def health():
+    """Public (contrôle de santé Docker et pipeline de mise en ligne)."""
+    if _health.source is None:
+        return {"status": "ok"}
+    now, last = _health.clock(), _health.source()
+    if last is None:
+        if now - _health.started <= _health.max_age_s:
+            return {"status": "démarrage"}
+        return JSONResponse({"status": "bloqué", "detail": "aucun cycle du moteur"},
+                            status_code=503)
+    age = now - last
+    if age > _health.max_age_s:
+        return JSONResponse({"status": "bloqué", "last_cycle_age_s": round(age)},
+                            status_code=503)
+    return {"status": "ok", "last_cycle_age_s": round(age)}
 
 
 @app.get("/", response_class=HTMLResponse)

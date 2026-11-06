@@ -9,6 +9,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DASHBOARD_HOST=0.0.0.0 \
     TZ=UTC
 
+# correctifs de sécurité du système de base (analyse Trivy en CI)
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 RUN useradd --uid 10001 --create-home trader
 WORKDIR /app
 

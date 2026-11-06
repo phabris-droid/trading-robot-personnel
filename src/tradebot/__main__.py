@@ -57,10 +57,15 @@ def main() -> int:
         print(f"Démarrage refusé : {exc}", file=sys.stderr)
         return 2
     from tradebot.engine import Engine
+    from tradebot.interfaces.dashboard import configure_health
 
+    engine = Engine(settings, journal, connectors=_connectors(settings, journal, env))
+    # /health = moteur vivant : dernier cycle de moins de N min (chien de garde, CDC §8)
+    configure_health(lambda: engine.last_cycle_ts,
+                     settings.engine.watchdog_minutes * 60 + 2 * settings.cycle_seconds)
     _start_dashboard(settings.dashboard.port, env, settings.mode)
     print(f"Robot démarré en mode {settings.mode.upper()}", flush=True)
-    Engine(settings, journal, connectors=_connectors(settings, journal, env)).run()
+    engine.run()
     journal.close()
     print("Robot arrêté proprement", flush=True)
     return 0

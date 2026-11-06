@@ -70,3 +70,34 @@ def test_constant_time_comparison_is_used():
     import inspect
 
     assert "compare_digest" in inspect.getsource(dashboard.require_auth)
+
+
+# --- /health suit le battement de cœur du moteur --------------------------------------------
+
+@pytest.fixture
+def health(clock):
+    beat = {"last": None}
+    dashboard.configure_health(lambda: beat["last"], 300, clock=lambda: clock["now"])
+    yield beat
+    dashboard.configure_health(None, 0)
+
+
+def test_health_ok_during_startup_grace(health, clock):
+    c = TestClient(app)
+    assert c.get("/health").json() == {"status": "démarrage"}
+    clock["now"] += 301
+    assert c.get("/health").status_code == 503          # jamais un seul cycle
+
+
+def test_health_ok_while_engine_cycles(health, clock):
+    c = TestClient(app)
+    health["last"] = clock["now"] - 60
+    r = c.get("/health")
+    assert r.status_code == 200 and r.json()["last_cycle_age_s"] == 60
+
+
+def test_health_fails_when_engine_is_stuck(health, clock):
+    c = TestClient(app)
+    health["last"] = clock["now"] - 301
+    r = c.get("/health")
+    assert r.status_code == 503 and r.json()["status"] == "bloqué"

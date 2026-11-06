@@ -1,7 +1,8 @@
-# Intégration continue : garde-fous, lint, tests, puis démarrage réel du conteneur.
-# - push sur dev            → CI
+# Intégration continue : garde-fous, lint, typage, tests + couverture, audit des dépendances,
+# puis démarrage réel du conteneur et analyse de l'image.
+# - push sur dev               → CI
 # - pull request vers dev/prod → CI
-# - push sur prod           → CI appelée par cd-prod.yml avant le déploiement
+# - push sur prod              → CI appelée par cd-prod.yml avant le déploiement
 # Aucun test ne touche un vrai compte (réseau simulé par respx) — CLAUDE.md.
 name: CI
 
@@ -16,12 +17,20 @@ on:
 permissions:
   contents: read
 
+env:
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1
+  ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12
+  TRIVY_IMAGE: aquasec/trivy:0.76.2
+  UV_VERSION: "0.13.7"
+
 jobs:
   garde-fous:
-    name: Garde-fous (secrets, fichiers interdits)
+    name: Garde-fous (secrets, workflows, scripts)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0              # gitleaks analyse tout l'historique
       - name: Aucun .env ni base SQLite versionné
         run: |
           interdits=$(git ls-files | grep -E '(^|/)\.env(\..+)?$|\.db$|\.db-(wal|shm)$' \
@@ -30,16 +39,33 @@ jobs:
             echo "::error::Fichiers interdits dans le dépôt : $interdits"
             exit 1
           fi
-      - name: Recherche de secrets en clair
+      - name: Secrets dans le code et l'historique (gitleaks)
+        continue-on-error: true      # DIAGNOSTIC (rendu bloquant ensuite)
         run: |
-          motifs='sk-ant-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
-          if git grep -nE "$motifs" -- . ':!.github/workflows/*'; then
-            echo "::error::Un secret semble présent dans le code. Le retirer et le révoquer."
-            exit 1
-          fi
+          rc=0
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
+            git /repo --no-banner --redact -v > gitleaks.log 2>&1 || rc=$?
+          body=$(tail -c 20000 gitleaks.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::notice title=gitleaks rc=$rc::$body"; exit $rc
+      - name: Workflows GitHub (actionlint)
+        continue-on-error: true      # DIAGNOSTIC
+        run: |
+          rc=0
+          docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -color \
+            > actionlint.log 2>&1 || rc=$?
+          body=$(tail -c 20000 actionlint.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::notice title=actionlint rc=$rc::$body"; exit $rc
+      - name: Scripts shell (bash -n + shellcheck)
+        continue-on-error: true      # DIAGNOSTIC
+        run: |
+          rc=0
+          ( for f in deploy/*.sh; do bash -n "$f" || exit 1; done; shellcheck deploy/*.sh ) \
+            > shell.log 2>&1 || rc=$?
+          body=$(tail -c 20000 shell.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::notice title=shellcheck rc=$rc::$body"; exit $rc
 
   tests:
-    name: Lint + tests (Python 3.12)
+    name: Lint + typage + tests (Python 3.12)
     runs-on: ubuntu-24.04
     needs: garde-fous
     steps:
@@ -50,26 +76,52 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Installation
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[dev]" "pytest-cov==7.1.0" "pip-audit==2.10.1" "uv==$UV_VERSION"
+      - name: Fichiers de versions exactes (DIAGNOSTIC)
+        continue-on-error: true
+        run: |
+          for extra in "" "--extra dev"; do
+            out=$([ -z "$extra" ] && echo requirements.lock || echo requirements-dev.lock)
+            uv pip compile pyproject.toml $extra --python-version 3.12 \
+              --python-platform x86_64-unknown-linux-gnu --no-header --quiet -o "$out"
+            body=$(sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g' "$out")
+            echo "::notice title=$out::$body"
+          done
       - name: Lint (ruff)
         run: ruff check --output-format=github src tests scripts
-      - name: Tests (pytest)
+      - name: Typage (mypy)
+        continue-on-error: true      # DIAGNOSTIC
+        run: |
+          rc=0; mypy src > mypy.log 2>&1 || rc=$?
+          body=$(tail -c 30000 mypy.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::notice title=mypy rc=$rc::$body"; exit $rc
+      - name: Tests (pytest + couverture)
         run: |
           set -o pipefail
-          python -m pytest -q -rfE --tb=short 2>&1 | tee pytest.log
-      - name: Nombre de tests visible dans le résumé
+          python -m pytest -q -rfE --tb=short --cov=tradebot --cov-report=term 2>&1 \
+            | tee pytest.log
+      - name: Nombre de tests et couverture visibles dans le résumé
         if: always()
         run: |
-          [ -f pytest.log ] && echo "::notice title=pytest::$(tail -n 1 pytest.log)" || true
+          [ -f pytest.log ] || exit 0
+          echo "::notice title=pytest::$(tail -n 1 pytest.log)"
+          body=$(sed -n '/coverage:/,/^TOTAL/p' pytest.log | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
+          echo "::notice title=couverture::$body"
       - name: Échecs pytest visibles dans le résumé
         if: failure()
         run: |
           msg=$(grep -E '^(FAILED|ERROR) |^E  |^[^ ]+\.py:[0-9]+: ' pytest.log | head -80 \
                 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
           echo "::error title=pytest::${msg:-voir le journal du job}"
+      - name: Dépendances vulnérables (pip-audit)
+        continue-on-error: true      # DIAGNOSTIC
+        run: |
+          rc=0; pip-audit --progress-spinner off --skip-editable > audit.log 2>&1 || rc=$?
+          body=$(tail -c 20000 audit.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::notice title=pip-audit rc=$rc::$body"; exit $rc
 
   docker:
-    name: Docker (build + démarrage sans .env)
+    name: Docker (build, démarrage sans .env, analyse)
     runs-on: ubuntu-24.04
     needs: tests
     steps:
@@ -84,7 +136,7 @@ jobs:
         run: |
           test ! -f .env
           docker compose up -d --build
-      - name: Le tableau de bord répond (/health) et le conteneur est sain
+      - name: Le tableau de bord répond (/health = moteur vivant) et le conteneur est sain
         run: |
           for i in $(seq 1 30); do
             etat=$(docker inspect -f '{{.State.Health.Status}}' tradebot 2>/dev/null || echo absent)
@@ -100,6 +152,15 @@ jobs:
         run: |
           test "$(docker inspect -f '{{.RestartCount}}' tradebot)" = "0"
           docker compose logs --tail 20
+      - name: Analyse de l'image (Trivy, HIGH/CRITICAL corrigeables)
+        continue-on-error: true      # DIAGNOSTIC
+        run: |
+          rc=0
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
+            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --no-progress --format table tradebot:local > trivy.log 2>&1 || rc=$?
+          body=$(tail -c 20000 trivy.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          echo "::notice title=trivy rc=$rc::$body"; exit $rc
       - name: Arrêt propre (SIGTERM)
         if: always()
         run: docker compose down -v
