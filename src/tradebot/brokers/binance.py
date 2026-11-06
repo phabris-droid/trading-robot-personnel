@@ -56,8 +56,11 @@ EP_EXCHANGE_INFO = "/api/v3/exchangeInfo"
 EP_BOOK_TICKER = "/api/v3/ticker/bookTicker"
 EP_ACCOUNT = "/api/v3/account"
 EP_ORDER = "/api/v3/order"
-EP_OCO = "/api/v3/orderList/oco"
-EP_ORDER_LIST = "/api/v3/orderList"
+# Adresses OCO — À VÉRIFIER J1 DÉMO (création, consultation, annulation, historique)
+EP_OCO = "/api/v3/orderList/oco"              # création d'un OCO
+EP_ORDER_LIST = "/api/v3/orderList"           # consultation (origClientOrderId), annulation
+EP_ALL_ORDER_LIST = "/api/v3/allOrderList"    # historique des OCO (repli si introuvable)
+ALL_ORDER_LIST_LIMIT = 100
 EP_OPEN_ORDERS = "/api/v3/openOrders"
 EP_MY_TRADES = "/api/v3/myTrades"
 CODE_TIMESTAMP = -1021            # horodatage hors recvWindow : requête refusée, resynchroniser
@@ -372,9 +375,24 @@ class BinanceSpot(Broker):
         pos.oco_id = list_id
         pos.status = "open"
 
+    def _locate_oco(self, pos: BinancePosition) -> dict | None:
+        """OCO de la position : par son identifiant, sinon dans l'historique des listes
+        (allOrderList) par préfixe « <client_id>-o ». None = introuvable partout."""
+        if pos.oco_id:
+            lst = self._find_oco(pos.oco_id)
+            if lst:
+                return lst
+        history = self._request("GET", self.trading_url, EP_ALL_ORDER_LIST,
+                                {"limit": ALL_ORDER_LIST_LIMIT}, signed=True)
+        mine = [x for x in history or []
+                if str(x.get("listClientOrderId", "")).startswith(f"{pos.client_id}-o")]
+        return max(mine, key=lambda x: x.get("transactionTime", 0)) if mine else None
+
     def _oco_fill(self, list_client_id: str) -> dict | None:
         """Jambe de l'OCO réellement exécutée (quantité > 0), sinon None."""
-        lst = self._find_oco(list_client_id) if list_client_id else None
+        return self._filled_leg(self._find_oco(list_client_id) if list_client_id else None)
+
+    def _filled_leg(self, lst: dict | None) -> dict | None:
         for leg in (lst or {}).get("orders", []):
             od = self._request("GET", self.trading_url, EP_ORDER,
                                {"symbol": leg["symbol"], "orderId": leg["orderId"]}, signed=True)
@@ -481,23 +499,33 @@ class BinanceSpot(Broker):
         pos = self._positions[position_id]
         if pos.status == "closed":
             return "closed_by_platform"
-        oco = self._find_oco(pos.oco_id) if pos.oco_id else None
+        oco = self._locate_oco(pos)
         if oco and oco.get("listOrderStatus") in OCO_ACTIVE:
+            pos.oco_id = oco.get("listClientOrderId") or pos.oco_id
+            pos.status = "open"
             return "ok"
-        # OCO absent ou terminé : détient-on encore l'actif ?
+        # « fermée par la plateforme » UNIQUEMENT si une vente exécutée de l'OCO est vue
+        filled = self._filled_leg(oco)
+        if filled:
+            self._apply_exit(pos, Decimal(str(filled["executedQty"])))  # partiel -> incohérent
+            return "closed_by_platform"
+        # aucune exécution vue : le stop est absent -> le reposer, sinon vendre (CDC §6)
         f = self.filters(pos.symbol)
         free, _locked = self.balances().get(f.base_asset, (0.0, 0.0))
         held = f.floor_qty(min(pos.qty, free))      # quantité suivie, plafonnée au solde libre
-        if held < f.min_qty or held <= 0:
-            pos.status = "closed"           # stop ou objectif exécuté chez la plateforme
-            return "closed_by_platform"
         pos.status = "unprotected"
         try:
+            if held < f.min_qty or held <= 0:
+                raise BrokerError(f"solde libre {free} insuffisant pour reposer le stop")
             self._place_oco(pos, held)
-            return "replaced"
         except BrokerError:
-            self._sell(pos, held)            # en cas d'échec, l'erreur remonte : réessayer
+            self._sell(pos, held)            # quantité nulle ou refus -> PositionInconsistent
             return "closed_no_stop"
+        if held < f.floor_qty(pos.qty):
+            pos.status = "inconsistent"
+            raise PositionInconsistent(pos.id, f"stop reposé sur {held} seulement, "
+                                               f"position suivie {pos.qty}")
+        return "replaced"
 
     def close_position(self, position_id: str) -> None:
         """Annule l'OCO puis vend. Ne déclare JAMAIS la position fermée sans avoir vu une

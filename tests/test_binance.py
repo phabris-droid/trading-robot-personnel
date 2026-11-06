@@ -50,6 +50,7 @@ def mock():
     with respx.mock(assert_all_called=False) as m:
         m.get(host=DEMO, path="/api/v3/exchangeInfo").respond(json=EXCHANGE_INFO)
         m.get(host=LIVE, path="/api/v3/ticker/bookTicker").respond(json=BOOK)
+        m.get(host=DEMO, path="/api/v3/allOrderList").respond(json=[])   # historique OCO vide
         yield m
 
 
@@ -241,12 +242,57 @@ def test_missing_oco_that_cannot_be_replaced_sells(mock, bn):
     assert _params(orders.calls.last)["side"] == "SELL"
 
 
+LEGS = [{"symbol": "BTCUSDT", "orderId": 7}, {"symbol": "BTCUSDT", "orderId": 8}]
+
+
 def test_oco_executed_means_position_closed_by_platform(mock, bn):
     _open(mock, bn)
-    mock.get(host=DEMO, path="/api/v3/orderList").respond(json={"listOrderStatus": "ALL_DONE"})
-    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0"))
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(
+        json={"listClientOrderId": "t1-o1", "listOrderStatus": "ALL_DONE", "orders": LEGS})
+    mock.get(host=DEMO, path="/api/v3/order").mock(side_effect=[
+        httpx.Response(200, json={"orderId": 7, "status": "FILLED", "executedQty": "0.00122"}),
+    ])
     assert bn.ensure_stop("t1") == "closed_by_platform"
     assert bn.positions() == []
+
+
+# --- M1 : « OCO introuvable » ne veut jamais dire « position fermée » -----------------------
+
+def test_oco_not_found_and_no_balance_is_never_closed(mock, bn):
+    """OCO invisible (adresse erronée) mais toujours actif : le BTC est bloqué, solde libre 0.
+    Le robot ne doit PAS conclure à une fermeture."""
+    _open(mock, bn)
+    orders = _orders_route(mock)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(400, json=NOT_FOUND)
+    mock.get(host=DEMO, path="/api/v3/account").respond(
+        json=_account(btc_free="0", btc_locked="0.00122"))
+    with pytest.raises(PositionInconsistent):
+        bn.ensure_stop("t1")
+    [pos] = bn.positions()                                  # toujours suivie
+    assert pos["status"] == "inconsistent"
+    assert _params(orders.calls.last)["side"] == "BUY"     # aucune vente aveugle
+
+
+def test_oco_found_in_history_when_direct_lookup_fails(mock, bn):
+    oco = _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(400, json=NOT_FOUND)
+    mock.get(host=DEMO, path="/api/v3/allOrderList").respond(json=[
+        {"listClientOrderId": "autre-o1", "listOrderStatus": "EXECUTING"},
+        {"listClientOrderId": "t1-o1", "listOrderStatus": "EXECUTING", "transactionTime": 5},
+    ])
+    assert bn.ensure_stop("t1") == "ok"
+    assert oco.call_count == 1                              # aucun OCO en double
+
+
+def test_cancelled_oco_without_fill_is_replaced(mock, bn):
+    oco = _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(
+        json={"listClientOrderId": "t1-o1", "listOrderStatus": "ALL_DONE", "orders": LEGS})
+    mock.get(host=DEMO, path="/api/v3/order").respond(
+        json={"status": "CANCELED", "executedQty": "0"})
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00122"))
+    assert bn.ensure_stop("t1") == "replaced"
+    assert oco.call_count == 2
 
 
 # --- ordres au statut incertain : jamais renvoyés -------------------------------------------
