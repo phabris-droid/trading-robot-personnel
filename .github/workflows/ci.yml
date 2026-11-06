@@ -21,7 +21,7 @@ jobs:
     name: Garde-fous (secrets, fichiers interdits)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Aucun .env ni base SQLite versionné
         run: |
           interdits=$(git ls-files | grep -E '(^|/)\.env(\..+)?$|\.db$|\.db-(wal|shm)$' \
@@ -43,8 +43,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: garde-fous
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Compose valide
         run: |
           docker compose config -q

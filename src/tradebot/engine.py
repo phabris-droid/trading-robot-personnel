@@ -32,7 +32,8 @@ class Engine:
             try:
                 self.cycle()
                 last_error = None
-            except Exception as exc:  # une erreur de cycle ne doit jamais arrêter le robot
+            # une erreur de cycle ne doit jamais arrêter le robot
+            except Exception as exc:  # noqa: BLE001
                 msg = f"{type(exc).__name__}: {exc}"
                 if msg != last_error:  # pas de répétition du même message à chaque cycle
                     print(f"Erreur pendant le cycle : {msg}", file=sys.stderr, flush=True)

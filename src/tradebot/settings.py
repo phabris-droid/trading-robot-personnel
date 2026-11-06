@@ -29,7 +29,7 @@ class Market(Strict):
     enabled: bool = True
 
     @model_validator(mode="after")
-    def _no_short_on_spot(self) -> "Market":
+    def _no_short_on_spot(self) -> Market:
         if self.platform == "binance" and "sell" in self.sides:
             raise ValueError(f"{self.symbol} : aucune vente à découvert sur Binance spot")
         return self
