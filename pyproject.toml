@@ -4,25 +4,27 @@ version = "2.0.0"
 description = "Robot de trading crypto (Binance spot) et forex (Capital.com CFD)"
 requires-python = ">=3.12"
 dependencies = [
-    "httpx>=0.27",
-    "requests>=2.32.4",
-    "pandas>=2.2",
-    "numpy>=1.26",
-    "pydantic>=2.7",
-    "pydantic-settings>=2.3",
-    "PyYAML>=6.0",
-    "fastapi>=0.115",
-    "starlette>=0.49.1",
-    "uvicorn>=0.30",
-    "python-telegram-bot>=21.0",
-    "anthropic>=0.40",
-    "feedparser>=6.0",
+    # plafonnées à la version majeure actuelle (novembre 2026) : une nouvelle majeure
+    # doit être testée avant d'être acceptée
+    "httpx>=0.27,<1",
+    "requests>=2.32.4,<3",
+    "pandas>=2.2,<4",
+    "numpy>=1.26,<3",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3,<3",
+    "PyYAML>=6.0,<7",
+    "fastapi>=0.115,<1",
+    "starlette>=0.49.1,<2",
+    "uvicorn>=0.30,<1",
+    "python-telegram-bot>=21.0,<23",
+    "anthropic>=0.40,<3",
+    "feedparser>=6.0,<7",
     "APScheduler>=3.10,<4",
-    "structlog>=24.1",
+    "structlog>=24.1,<27",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "hypothesis>=6", "respx>=0.21", "ruff>=0.5", "mypy>=1.10"]
+dev = ["pytest>=8,<10", "hypothesis>=6,<7", "respx>=0.21,<1", "ruff==0.17.4", "mypy>=1.10,<3"]
 
 [build-system]
 requires = ["setuptools>=69"]
@@ -37,3 +39,9 @@ pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Règles figées (version de ruff figée dans les dépendances dev) : une mise à jour de ruff
+# ne peut plus casser la CI sans changement de code.
+select = ["E4", "E7", "E9", "F", "BLE", "C4", "UP", "RUF100"]
