@@ -191,7 +191,7 @@ class Journal:
             try:
                 self._on_alert(level, message)
             # une alerte ne doit jamais casser le journal
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("alerte du journal impossible")
 
     @classmethod
