@@ -122,6 +122,13 @@ MIGRATIONS: list[str] = [
     );
     ALTER TABLE positions ADD COLUMN protection_ref TEXT NOT NULL DEFAULT '';
     """,
+    # v4 : stop, objectif et stratégie du signal d'origine enregistrés avec l'ordre AVANT
+    #      l'envoi, pour protéger un ordre incertain retrouvé exécuté plus tard
+    """
+    ALTER TABLE orders ADD COLUMN stop REAL;
+    ALTER TABLE orders ADD COLUMN target REAL;
+    ALTER TABLE orders ADD COLUMN strategy TEXT NOT NULL DEFAULT '';
+    """,
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
@@ -362,20 +369,28 @@ class Journal:
 
     def save_order(self, client_id: str, platform: str, market: str, side: str, qty: float,
                    status: str, broker_id: str | None = None,
-                   payload: dict | None = None) -> None:
+                   payload: dict | None = None, stop: float | None = None,
+                   target: float | None = None, strategy: str = "") -> None:
         _check_side(side)
         if status not in ORDER_STATUSES:
             raise ValueError(f"statut d'ordre inconnu : {status}")
         _check_finite(qty=qty)
+        if stop is not None or target is not None:
+            _check_finite(stop=stop, target=target)
         now = self._now()
         self._write(_Op(
             "INSERT INTO orders (client_id, platform, market, side, qty, status, broker_id, "
-            "payload, created_ts, updated_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "payload, created_ts, updated_ts, stop, target, strategy) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(client_id) DO UPDATE SET status=excluded.status, "
             "broker_id=COALESCE(excluded.broker_id, orders.broker_id), "
-            "payload=excluded.payload, updated_ts=excluded.updated_ts",
+            "payload=excluded.payload, updated_ts=excluded.updated_ts, "
+            "stop=COALESCE(excluded.stop, orders.stop), "
+            "target=COALESCE(excluded.target, orders.target), "
+            "strategy=CASE WHEN excluded.strategy != '' THEN excluded.strategy "
+            "ELSE orders.strategy END",
             (client_id, platform, market, side, qty, status, broker_id,
-             json.dumps(payload or {}, sort_keys=True), now, now),
+             json.dumps(payload or {}, sort_keys=True), now, now, stop, target, strategy),
             critical=True))
 
     def orders(self, status: str | None = None) -> list[dict]:

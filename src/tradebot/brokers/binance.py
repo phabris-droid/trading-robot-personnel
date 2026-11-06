@@ -59,9 +59,11 @@ EP_ORDER = "/api/v3/order"
 EP_OCO = "/api/v3/orderList/oco"
 EP_ORDER_LIST = "/api/v3/orderList"
 EP_OPEN_ORDERS = "/api/v3/openOrders"
+EP_MY_TRADES = "/api/v3/myTrades"
 CODE_TIMESTAMP = -1021            # horodatage hors recvWindow : requête refusée, resynchroniser
 CODES_NOT_FOUND = {-2011, -2013}  # ordre / liste introuvable
 OCO_ACTIVE = {"EXECUTING"}        # listOrderStatus d'un OCO encore en place
+ORDER_FINAL_STATUSES = {"REJECTED", "EXPIRED", "CANCELED", "EXPIRED_IN_MATCH"}
 CLIENT_ID_MAX = 28                # Binance accepte 36 : suffixes « -oNNa » réservés
 HOUR_MS = 3_600_000
 
@@ -426,13 +428,40 @@ class BinanceSpot(Broker):
 
         fill = self._market(symbol, "buy", q, client_id)   # OrderUncertain remonte tel quel
         executed = Decimal(str(fill.get("executedQty", "0")))
-        fee_base = sum((Decimal(str(x.get("commission", "0"))) for x in fill.get("fills", [])
-                        if x.get("commissionAsset") == f.base_asset), Decimal(0))
-        net = f.floor_qty(float(executed - fee_base))
         if executed <= 0:
             raise OrderRejected(f"{symbol} : achat non exécuté ({fill.get('status')})")
-        quote_spent = Decimal(str(fill.get("cummulativeQuoteQty", "0")))
-        entry = float(quote_spent / executed) if quote_spent > 0 else ask
+        return self._protect_new(symbol, client_id, executed, fill.get("fills", []),
+                                 Decimal(str(fill.get("cummulativeQuoteQty", "0"))), stop, target)
+
+    def recover_order(self, client_id: str, symbol: str, stop: float, target: float) -> str | None:
+        """Ordre d'achat au statut incertain (CDC §6), recherché à chaque cycle :
+        - introuvable ou refusé sans exécution : None (aucune position) ;
+        - exécuté : la position est créée et l'OCO posé avec le stop et l'objectif du
+          signal d'origine ; si l'OCO échoue, vente immédiate (StopNotPlaced) ;
+        - toujours indéterminé : OrderUncertain (on recommencera au cycle suivant)."""
+        if client_id in self._positions:
+            return client_id
+        od = self.find_order(client_id, symbol)
+        if od is None:
+            return None
+        executed = Decimal(str(od.get("executedQty", "0")))
+        if executed <= 0:
+            if od.get("status") in ORDER_FINAL_STATUSES:
+                return None
+            raise OrderUncertain(client_id, f"statut {od.get('status')}")
+        trades = self._request("GET", self.trading_url, EP_MY_TRADES,
+                               {"symbol": symbol, "orderId": od["orderId"]}, signed=True)
+        return self._protect_new(symbol, client_id, executed, trades,
+                                 Decimal(str(od.get("cummulativeQuoteQty", "0"))), stop, target)
+
+    def _protect_new(self, symbol: str, client_id: str, executed: Decimal, fills: list,
+                     quote_spent: Decimal, stop: float, target: float) -> str:
+        """Achat exécuté : position suivie puis OCO posé aussitôt, sinon vente immédiate."""
+        f = self.filters(symbol)
+        fee_base = sum((Decimal(str(x.get("commission", "0"))) for x in fills
+                        if x.get("commissionAsset") == f.base_asset), Decimal(0))
+        net = f.floor_qty(float(executed - fee_base))
+        entry = float(quote_spent / executed) if quote_spent > 0 else self.quote(symbol)[1]
 
         pos = BinancePosition(client_id, symbol, float(net), entry, stop, target, client_id,
                               status="unprotected")
