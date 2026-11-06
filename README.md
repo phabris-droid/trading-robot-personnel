@@ -101,54 +101,45 @@ Si la CI échoue, rien n'est déployé.
 
 ## Erreurs connues (de la plus grave à la moins grave)
 
-État au 2026-11-06, après les étapes 0, 0 bis, 1 et 2 de `PROMPTS_CLAUDE_CODE.md`.
-Analyse détaillée : [docs/ETAPE_0_ANALYSE.md](docs/ETAPE_0_ANALYSE.md).
+État au 2026-11-06, après les étapes 0 à 2 de `PROMPTS_CLAUDE_CODE.md` et la campagne de
+corrections (C3–C5, M1–M5, m1–m8, n1–n6). **184 tests passent** (CI `dev`).
+Analyse détaillée : [docs/ETAPE_0_ANALYSE.md](docs/ETAPE_0_ANALYSE.md) ·
+réglages manuels du déploiement : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md).
 
 ### 🔴 Critiques (argent réel en jeu)
 
 | # | Fichier | Erreur | Conséquence | Correction prévue |
 |---|---|---|---|---|
-| C1 | `risk/sizing.py` | Si la taille plafonnée est sous le minimum de la plateforme, elle est remontée au minimum sans revérifier le plafond de 25 %. | Une position peut dépasser 25 % du capital. | Étape 4 |
-| C2 | `risk/sizing.py` | Le plafond de 25 % est calculé sur la valeur pour toutes les plateformes, pas sur la marge pour Capital.com. | Avec C1, une position EURUSD saute à 500 unités sur 100 $. | Étape 4 |
-| C3 | `brokers/binance.py` | `close_position` annule l'OCO puis vend seulement la part « robot » du solde ; si elle vaut 0, la position est marquée fermée sans rien vendre. | Des cryptos restent détenues sans aucun stop, le robot les croit vendues. | Immédiate |
-| C4 | `brokers/binance.py` | Les avoirs personnels présents au démarrage ne sont gardés qu'en mémoire, pas dans le journal. | Au redémarrage, les cryptos du robot seraient prises pour des avoirs personnels, ce qui déclenche C3. | Immédiate |
-| C5 | `brokers/binance.py` | Un achat au statut incertain retrouvé ensuite comme exécuté n'a aucun moyen de recevoir son OCO. | Position possible sans stop. | Étape 5 |
+| C1 | `risk/sizing.py` | Si la taille plafonnée est sous le minimum de la plateforme, elle est remontée au minimum sans revérifier le plafond de 25 %. | Une position peut dépasser 25 % du capital. | Étape 4, **attend tes réponses A2–A4** |
+| C2 | `risk/sizing.py` | Le plafond de 25 % est calculé sur la valeur pour toutes les plateformes, pas sur la marge pour Capital.com. | Avec C1, une position EURUSD saute à 500 unités sur 100 $. | Étape 4, **attend tes réponses A2–A4** |
 
 ### 🟠 Majeures
 
 | # | Fichier | Erreur | Correction prévue |
 |---|---|---|---|
-| M1 | `brokers/binance.py` | Si la recherche de l'OCO répond « introuvable » alors qu'il est actif (adresse de l'API non vérifiée en démo), le solde libre vaut 0 et `ensure_stop` conclut à tort « fermée par la plateforme » : le robot oublie une position ouverte. | Immédiate |
-| M2 | CI `dev` | Tests Binance en échec au dernier passage ; correction (signature de référence) en attente de confirmation. | En cours |
-| M3 | CD `prod` | Pipeline de mise en ligne jamais exécuté ; environnement `production` et secrets du VPS absents ; pas de droits admin sur le dépôt. | Configuration GitHub |
-| M4 | `strategies/` | Aucune sortie anticipée codée (croisement inverse, RSI > 55, plus bas des 10 bougies), contrairement au CDC §3. | Avant l'étape 9 |
-| M5 | `engine.py` | `cycle()` non écrit, journal et Binance non branchés : le robot démarre mais ne trade pas. | Étape 6 |
+| M3 | CD `prod` | Pipeline de mise en ligne jamais exécuté ; environnement `production`, secrets du VPS et droits admin absents. Workflow vérifié : il saute proprement le déploiement sans secrets. | Manuelle : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md) |
+| M6 | `engine.py` | Le moteur ouvre désormais des positions (démo, avec clés) **sans disjoncteurs** (perte du jour 3 %, baisse 15 %, 10 trades/jour) **ni équipe d'analyse** : seuls le plafond de 4 positions et la taille de position s'appliquent. Le mode réel reste bloqué par `CONFIRM_LIVE_TRADING`. | Étapes 4 et 7 ; ne pas passer en réel avant |
+| M7 | `execution/orders.py` | Un ordre incertain introuvable chez Binance au cycle suivant est déclaré « jamais exécuté ». Si la plateforme le publie plus tard, la position ne serait pas suivie (la réconciliation détecterait l'avoir inexpliqué et mettrait en pause). | Étape 5 : n'abandonner qu'après plusieurs cycles |
 
 ### 🟡 Moyennes
 
 | # | Fichier | Erreur |
 |---|---|---|
-| m1 | `brokers/binance.py` | Un en-tête `Retry-After` non numérique fait planter la requête. |
-| m2 | `brokers/binance.py` | Un HTTP 418 (IP bannie) est retenté après 0,5 s comme un simple 429 ; il faudrait cesser les requêtes plus longtemps. |
-| m3 | `brokers/binance.py` | `equity()` suppose un capital en USDT au lieu de lire la devise de cotation du marché. |
-| m4 | `brokers/binance.py` | Le stop arrondi au cran supérieur peut toucher le prix acheteur : OCO refusé, position vendue aussitôt. |
-| m5 | `journal.py` | Écritures refusées par le schéma rangées dans `rejected` sans alerte ; journal indisponible au démarrage non signalé. |
-| m6 | `settings.py` | Validation non stricte des types : `"10"` accepté comme nombre, `"yes"` comme booléen (CDC §4 : un texte à la place d'un nombre doit bloquer). |
-| m7 | `pyproject.toml` | Version et règles de ruff non figées : une nouvelle version peut casser la CI sans changement de code. |
-| m8 | `settings.py` | Le `.env` n'est lu que dans Docker : en local, les clés ne sont pas chargées. |
+| m9 | `engine.py` | Frais estimés (`FEE_RATE = 0,1 %`) codés en dur au lieu d'être dans `config.yaml` (règle 10 de CLAUDE.md). |
+| m10 | `engine.py` | Prix de sortie journalisé = cotation au moment de la fermeture, pas le prix réellement exécuté : P&L approximatif. |
+| m11 | `engine.py` | Les pauses de marché sont gardées en mémoire : un redémarrage les efface (elles sont redétectées au cycle suivant si la cause persiste). |
 
 ### ⚪ Mineures
 
 | # | Fichier | Erreur |
 |---|---|---|
-| n1 | `interfaces/dashboard.py` | Tableau de bord sans authentification (acceptable tant qu'il n'expose que `/health`). |
-| n2 | `pyproject.toml` | `pydantic-settings` inutilisé ; `python-telegram-bot` non plafonné à la v21. |
-| n3 | `deploy/` | `harden_vps.sh`, `audit_vps.sh`, `install_systemd.sh` vides ; domaine du `Caddyfile` fictif. |
-| n4 | `deploy/harden_vps.sh` | La sauvegarde devra viser le volume Docker `tradebot-data`, plus `./data`. |
-| n5 | `.github/workflows/` | Avertissements GitHub : Node 20 déprécié pour les actions Docker. |
-| n6 | CDC §9 | « 717 tests » annoncés ; environ 118 aujourd'hui (objectif, pas acquis). |
+| n3 | `deploy/` | `harden_vps.sh`, `audit_vps.sh`, `install_systemd.sh` toujours vides (en-têtes TODO ajoutés, sortie en erreur) : étape 10. |
+| n7 | `brokers/binance.py` | Recherche d'un OCO dans l'historique limitée aux 100 dernières listes ; au-delà, l'OCO est considéré absent et reposé (sens prudent). |
+| n8 | `.github/workflows/cd-prod.yml` | Les actions Docker (buildx v4, build-push v7, login v4) ne sont exercées que par la CD, jamais par la CI. |
+| n9 | `journal.py` | La liste `rejected` (écritures refusées) n'est jamais vidée. |
 
 ### ❓ Décisions en attente
 
 A2 à A11 de [docs/ETAPE_0_ANALYSE.md](docs/ETAPE_0_ANALYSE.md). A2–A4 (risque par plateforme ou
-au total, disjoncteurs, or compté comme forex) sont nécessaires pour corriger C1 et C2.
+au total, disjoncteurs, or compté comme forex) débloquent C1 et C2. A7 est tranchée
+(vente du retour à la moyenne : RSI < 45 ou retour sous la moyenne).
