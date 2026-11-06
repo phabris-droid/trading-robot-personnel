@@ -119,3 +119,25 @@ def test_live_requires_confirmation(tmp_path):
         load_settings(p, env={"CONFIRM_LIVE_TRADING": "OUI", "DASHBOARD_PASSWORD": "court"})
     s = load_settings(p, env={"CONFIRM_LIVE_TRADING": "OUI", "DASHBOARD_PASSWORD": "x" * 12})
     assert s.mode == "live" and s.db_path == "data/tradebot_live.db"
+
+
+# --- m6 : types stricts ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("mutate,expected", [
+    (_set(["risk"], "risk_per_trade_pct", "1"), "un nombre est attendu"),
+    (_set(["risk"], "max_open_positions", "4"), "un nombre est attendu"),
+    (_set(["risk"], "max_open_positions", 4.5), "un nombre est attendu"),
+    (lambda r: r["markets"][0].update(enabled="yes"), "true ou false attendu"),
+    (_set(["analysts", "ai"], "enabled", 1), "true ou false attendu"),
+    (_set(["reports"], "audit_day", 7), "valeur non autorisée"),
+], ids=["texte-decimal", "texte-entier", "decimal-pour-entier", "yes", "1-pour-booleen",
+        "nombre-pour-texte"])
+def test_text_is_never_accepted_as_number_or_boolean(tmp_path, mutate, expected):
+    with pytest.raises(ConfigError) as exc:
+        load_settings(_write(tmp_path, mutate))
+    assert expected in str(exc.value) or "attendu" in str(exc.value)
+
+
+def test_integer_is_accepted_where_a_decimal_is_expected(tmp_path):
+    s = load_settings(_write(tmp_path, _set(["risk"], "risk_per_trade_pct", 1)))
+    assert s.risk.risk_per_trade_pct == 1.0

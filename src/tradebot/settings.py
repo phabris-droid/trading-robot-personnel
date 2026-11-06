@@ -19,7 +19,9 @@ class ConfigError(Exception):
 
 
 class Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=False, frozen=True)
+    # strict : "10" n'est pas un nombre, "yes" n'est pas un booléen (CDC §4) ;
+    # un entier reste accepté là où un décimal est attendu (1 pour 1.0)
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
 HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
@@ -276,8 +278,15 @@ def _french(err: ValidationError) -> str:
             msg = "paramètre inconnu"
         elif kind == "missing":
             msg = "paramètre obligatoire manquant"
-        elif kind in ("float_parsing", "int_parsing", "int_from_float"):
-            msg = "un nombre est attendu"
+        elif kind in ("float_parsing", "int_parsing", "int_from_float", "float_type",
+                      "int_type"):
+            msg = f"un nombre est attendu, reçu {e.get('input')!r}"
+        elif kind == "bool_type":
+            msg = f"true ou false attendu, reçu {e.get('input')!r}"
+        elif kind == "string_type":
+            msg = f"un texte est attendu, reçu {e.get('input')!r}"
+        elif kind in ("list_type", "dict_type", "model_type"):
+            msg = "structure invalide (liste ou section attendue)"
         elif kind.startswith(("greater", "less")):
             msg = f"valeur hors bornes ({e['msg']})"
         elif kind == "string_pattern_mismatch":
