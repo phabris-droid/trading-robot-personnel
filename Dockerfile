@@ -15,10 +15,12 @@ RUN apt-get update && apt-get upgrade -y --no-install-recommends \
 RUN useradd --uid 10001 --create-home trader
 WORKDIR /app
 
-# Dépendances d'abord (couche mise en cache tant que pyproject.toml ne change pas)
+# Dépendances d'abord, en versions exactes (couche mise en cache tant que le verrou ne change pas)
+COPY requirements.lock ./
+RUN pip install -r requirements.lock
 COPY pyproject.toml ./
 COPY src ./src
-RUN pip install .
+RUN pip install --no-deps .
 
 COPY config ./config
 COPY scripts ./scripts

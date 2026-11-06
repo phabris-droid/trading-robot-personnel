@@ -543,7 +543,7 @@ def _check_side(side: str) -> None:
         raise ValueError(f"sens inconnu : {side}")
 
 
-def _check_finite(**values: float) -> None:
+def _check_finite(**values: float | None) -> None:
     for name, v in values.items():
         if v is None or not math.isfinite(v):
             raise ValueError(f"{name} invalide : {v}")

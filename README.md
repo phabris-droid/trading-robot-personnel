@@ -72,22 +72,43 @@ Voir `STACK.md` pour les choix techniques.
 ## Branches et pipelines
 
 ```
-dev  (tests, démo)  ──push──▶  prod  ──▶  CI  ──▶  image GHCR  ──▶  mise en ligne sur le VPS
+dev (travail, tests, démo) ──mise en ligne──▶ prod ──▶ CI ──▶ image testée ──▶ VPS ──▶ /health
+                                                                              └─ échec : retour à
+                                                                                 l'image précédente
 ```
 
 | Branche | Rôle | Pipeline |
 |---------|------|----------|
 | `main`  | vide, non utilisée | aucun |
-| `dev`   | travail et tests | `CI` : garde-fous secrets, `ruff`, `pytest`, build + démarrage réel du conteneur sans `.env` |
-| `prod`  | ce qui est en ligne | `CD prod` : même CI → image `ghcr.io/phabris-droid/trading-robot-personnel:prod` → VPS → contrôle `/health` |
+| `dev`   | travail et tests | `CI` (ci-dessous), à chaque push |
+| `prod`  | ce qui est en ligne — **vide tant qu'aucune mise en ligne n'est décidée** | `CD prod` : CI → image construite une fois, démarrée et analysée → publiée par empreinte → VPS → `/health`, retour arrière automatique si KO |
 
-Mettre en ligne ce qui est sur `dev` :
+### Ce que vérifie la CI (tout est bloquant)
+
+| Job | Contrôles |
+|---|---|
+| Garde-fous | aucun `.env` ni base SQLite versionné ; **gitleaks** sur tout l'historique ; **actionlint** (workflows + shellcheck des scripts intégrés) ; **bash -n + shellcheck** sur `deploy/*.sh` |
+| Lint + typage + tests | installation depuis les **versions exactes** (`requirements*.lock`) et contrôle de leur cohérence avec `pyproject.toml` ; **ruff** ; **mypy** ; **pytest** avec **couverture ≥ 85 %** ; **pip-audit** (dépendances vulnérables) |
+| Docker | build ; démarrage sans `.env` ; `/health` = **moteur vivant** (dernier cycle < 5 min) ; pas de redémarrage en boucle ; **Trivy** (vulnérabilités HIGH/CRITICAL corrigeables) |
+
+Le nombre de tests et la couverture sont affichés dans le résumé de chaque exécution.
+
+Mettre en ligne ce qui est sur `dev` (le contenu de `prod` est remplacé par celui de `dev`,
+sans push forcé) :
 
 ```bash
-git checkout prod && git merge --ff-only dev && git push && git checkout dev
+git checkout prod && git merge -s ours --no-commit dev && git read-tree -u --reset dev \
+  && git commit -m "Mise en ligne de dev" && git push && git checkout dev
 ```
 
 Si la CI échoue, rien n'est déployé.
+
+Régénérer les versions exactes après une modification de `pyproject.toml` :
+
+```bash
+uv pip compile pyproject.toml --python-version 3.12 --python-platform x86_64-unknown-linux-gnu --no-header -o requirements.lock
+uv pip compile pyproject.toml --extra dev --python-version 3.12 --python-platform x86_64-unknown-linux-gnu --no-header -o requirements-dev.lock
+```
 
 ### Configuration à faire une fois
 1. **GitHub → Settings → Environments → `production`** : ajouter les secrets `VPS_HOST`,

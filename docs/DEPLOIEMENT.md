@@ -63,11 +63,15 @@ Le VPS s'authentifie à chaque déploiement avec le jeton temporaire du pipeline
 ## 7. Mettre en ligne
 
 ```bash
-git checkout prod && git merge --ff-only dev && git push && git checkout dev
+# prod est vide tant qu'aucune mise en ligne n'est décidée : son contenu est remplacé par dev
+git checkout prod && git merge -s ours --no-commit dev && git read-tree -u --reset dev \
+  && git commit -m "Mise en ligne de dev" && git push && git checkout dev
 ```
 
-Si la CI échoue, rien n'est déployé. Si `/health` ne répond pas en 150 s, le job échoue et
-affiche les 80 dernières lignes de journal du conteneur.
+Si la CI échoue, rien n'est déployé. L'image déployée est exactement celle qui a été testée
+(démarrage + Trivy), identifiée par son empreinte sha256. Si `/health` (moteur vivant) ne répond
+pas en 150 s, le job affiche les 80 dernières lignes de journal et **revient automatiquement à
+l'image précédente**.
 
 ## Vérifications faites sur le workflow
 
@@ -76,5 +80,4 @@ affiche les 80 dernières lignes de journal du conteneur.
   un avertissement et un résumé « Déploiement sauté ».
 - Le jeton GHCR passe par l'entrée standard du SSH, jamais dans une ligne de commande.
 - `concurrency: deploy-prod` sans annulation : un déploiement en cours n'est jamais interrompu.
-- `actionlint` n'a pas pu être exécuté dans cet environnement : à lancer en local
-  (`actionlint .github/workflows/*.yml`) si possible.
+- `actionlint` (avec shellcheck des scripts intégrés) est exécuté à chaque CI.

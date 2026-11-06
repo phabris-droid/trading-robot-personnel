@@ -27,6 +27,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from typing import Any
 
 from tradebot.brokers.base import PositionInconsistent
 from tradebot.execution.orders import open_trade, resolve_uncertain
@@ -47,12 +48,12 @@ def _stderr_alert(level: str, message: str) -> None:
 
 class Engine:
     def __init__(self, settings: Settings, journal: Journal | None = None,
-                 connectors: dict[str, Callable[[], object]] | None = None,
+                 connectors: dict[str, Callable[[], Any]] | None = None,
                  alert: Alert | None = None, clock: Callable[[], float] = time.time):
         self.settings = settings
         self.journal = journal
         self.connectors = connectors or {}       # plateforme -> fonction de connexion
-        self.brokers: dict[str, object] = {}
+        self.brokers: dict[str, Any] = {}        # interface Broker (duck typing)
         self._alert_out = alert or _stderr_alert
         self._clock = clock
         self._stop = False

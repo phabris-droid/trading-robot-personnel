@@ -67,7 +67,7 @@ jobs:
         run: |
           docker run -d --name candidate --read-only --tmpfs /tmp \
             --tmpfs /app/data:uid=10001,gid=10001 -p 127.0.0.1:8080:8080 "$REF"
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8080/health; then echo; docker rm -f candidate; exit 0; fi
             sleep 3
           done
@@ -150,9 +150,9 @@ jobs:
           H: ${{ secrets.VPS_HOST }}
           U: ${{ secrets.VPS_USER }}
         run: |
-          OPTS="-i $HOME/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-          ssh $OPTS "$U@$H" "mkdir -p '$APP_DIR'"
-          scp $OPTS docker-compose.prod.yml "$U@$H:$APP_DIR/"
+          OPTS=(-i "$HOME/.ssh/id_deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          printf 'mkdir -p %q\n' "$APP_DIR" | ssh "${OPTS[@]}" "$U@$H" "bash -s"
+          scp "${OPTS[@]}" docker-compose.prod.yml "$U@$H:$APP_DIR/"
 
       - name: Télécharger l'image et relancer le robot
         if: steps.check.outputs.ok == 'true'
@@ -162,10 +162,12 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: |
-          OPTS="-i $HOME/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-          # Le jeton GHCR passe par l'entrée standard (jamais dans la ligne de commande distante)
+          OPTS=(-i "$HOME/.ssh/id_deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          # Variables et jeton GHCR passés par l'entrée standard (jamais dans une ligne de
+          # commande distante, visible dans la liste des processus du VPS)
           {
-            printf 'GHCR_TOKEN=%q\n' "$GHCR_TOKEN"
+            printf 'APP_DIR=%q\nTRADEBOT_IMAGE=%q\nGHCR_USER=%q\nGHCR_TOKEN=%q\n' \
+              "$APP_DIR" "$IMAGE_REF" "$GHCR_USER" "$GHCR_TOKEN"
             cat <<'SCRIPT'
           set -euo pipefail
           cd "$APP_DIR"
@@ -208,8 +210,7 @@ jobs:
           fi
           exit 1
           SCRIPT
-          } | ssh $OPTS "$U@$H" \
-                "APP_DIR='$APP_DIR' TRADEBOT_IMAGE='$IMAGE_REF' GHCR_USER='$GHCR_USER' bash -s"
+          } | ssh "${OPTS[@]}" "$U@$H" "bash -s"
 
       - name: Nettoyer la clé
         if: always()

@@ -1,0 +1,8 @@
+# Configuration gitleaks (CI) : règles par défaut + exceptions justifiées.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Exemple PUBLIC de la documentation Binance (signature HMAC-SHA256), pas une clé réelle"
+regexTarget = "match"
+regexes = ['''NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j''']

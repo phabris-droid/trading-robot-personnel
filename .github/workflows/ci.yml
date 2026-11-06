@@ -1,5 +1,5 @@
 # Intégration continue : garde-fous, lint, typage, tests + couverture, audit des dépendances,
-# puis démarrage réel du conteneur et analyse de l'image.
+# puis démarrage réel du conteneur et analyse de l'image. Tous les contrôles sont bloquants.
 # - push sur dev               → CI
 # - pull request vers dev/prod → CI
 # - push sur prod              → CI appelée par cd-prod.yml avant le déploiement
@@ -22,6 +22,7 @@ env:
   ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12
   TRIVY_IMAGE: aquasec/trivy:0.76.2
   UV_VERSION: "0.13.7"
+  COVERAGE_MIN: "85"            # couverture mesurée : 89 % (novembre 2026)
 
 jobs:
   garde-fous:
@@ -39,30 +40,16 @@ jobs:
             echo "::error::Fichiers interdits dans le dépôt : $interdits"
             exit 1
           fi
-      - name: Secrets dans le code et l'historique (gitleaks)
-        continue-on-error: true      # DIAGNOSTIC (rendu bloquant ensuite)
+      - name: Secrets dans le code et tout l'historique (gitleaks)
         run: |
-          rc=0
           docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" "$GITLEAKS_IMAGE" \
-            git /repo --no-banner --redact -v > gitleaks.log 2>&1 || rc=$?
-          body=$(tail -c 20000 gitleaks.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
-          echo "::notice title=gitleaks rc=$rc::$body"; exit $rc
-      - name: Workflows GitHub (actionlint)
-        continue-on-error: true      # DIAGNOSTIC
-        run: |
-          rc=0
-          docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -color \
-            > actionlint.log 2>&1 || rc=$?
-          body=$(tail -c 20000 actionlint.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
-          echo "::notice title=actionlint rc=$rc::$body"; exit $rc
+            git /repo --config /repo/.gitleaks.toml --no-banner --redact -v
+      - name: Workflows GitHub (actionlint + shellcheck des scripts intégrés)
+        run: docker run --rm -v "$PWD:/repo" --workdir /repo "$ACTIONLINT_IMAGE" -color
       - name: Scripts shell (bash -n + shellcheck)
-        continue-on-error: true      # DIAGNOSTIC
         run: |
-          rc=0
-          ( for f in deploy/*.sh; do bash -n "$f" || exit 1; done; shellcheck deploy/*.sh ) \
-            > shell.log 2>&1 || rc=$?
-          body=$(tail -c 20000 shell.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
-          echo "::notice title=shellcheck rc=$rc::$body"; exit $rc
+          for f in deploy/*.sh; do bash -n "$f"; done
+          shellcheck deploy/*.sh
 
   tests:
     name: Lint + typage + tests (Python 3.12)
@@ -74,51 +61,48 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: pyproject.toml
-      - name: Installation
-        run: python -m pip install -e ".[dev]" "pytest-cov==7.1.0" "pip-audit==2.10.1" "uv==$UV_VERSION"
-      - name: Fichiers de versions exactes (DIAGNOSTIC)
-        continue-on-error: true
+          cache-dependency-path: requirements-dev.lock
+      - name: Installation depuis les versions exactes
         run: |
-          for extra in "" "--extra dev"; do
-            out=$([ -z "$extra" ] && echo requirements.lock || echo requirements-dev.lock)
-            uv pip compile pyproject.toml $extra --python-version 3.12 \
-              --python-platform x86_64-unknown-linux-gnu --no-header --quiet -o "$out"
-            body=$(sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g' "$out")
-            echo "::notice title=$out::$body"
+          python -m pip install -r requirements-dev.lock
+          python -m pip install --no-deps -e .
+          python -m pip install "pytest-cov==7.1.0" "pip-audit==2.10.1" "uv==$UV_VERSION"
+      - name: Versions exactes cohérentes avec pyproject.toml
+        run: |
+          for spec in "requirements.lock|" "requirements-dev.lock|--extra=dev"; do
+            lock="${spec%%|*}"; extra="${spec##*|}"
+            cp "$lock" "/tmp/$lock"
+            uv pip compile pyproject.toml ${extra:+"$extra"} --python-version 3.12 \
+              --python-platform x86_64-unknown-linux-gnu --no-header --quiet -o "/tmp/$lock"
+            if ! diff <(grep -v '^#' "$lock") <(grep -v '^#' "/tmp/$lock"); then
+              echo "::error::$lock n'est plus cohérent avec pyproject.toml : le régénérer (uv pip compile)"
+              exit 1
+            fi
           done
       - name: Lint (ruff)
         run: ruff check --output-format=github src tests scripts
       - name: Typage (mypy)
-        continue-on-error: true      # DIAGNOSTIC
-        run: |
-          rc=0; mypy src > mypy.log 2>&1 || rc=$?
-          body=$(tail -c 30000 mypy.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
-          echo "::notice title=mypy rc=$rc::$body"; exit $rc
-      - name: Tests (pytest + couverture)
+        run: mypy src
+      - name: Tests (pytest + couverture minimale)
         run: |
           set -o pipefail
-          python -m pytest -q -rfE --tb=short --cov=tradebot --cov-report=term 2>&1 \
-            | tee pytest.log
+          python -m pytest -q -rfE --tb=short --cov=tradebot --cov-report=term \
+            --cov-fail-under="$COVERAGE_MIN" 2>&1 | tee pytest.log
       - name: Nombre de tests et couverture visibles dans le résumé
         if: always()
         run: |
           [ -f pytest.log ] || exit 0
-          echo "::notice title=pytest::$(tail -n 1 pytest.log)"
-          body=$(sed -n '/coverage:/,/^TOTAL/p' pytest.log | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')
-          echo "::notice title=couverture::$body"
+          echo "::notice title=pytest::$(grep -E 'passed|failed' pytest.log | tail -n 1)"
+          echo "::notice title=couverture::$(grep -E '^TOTAL' pytest.log || echo inconnue)"
       - name: Échecs pytest visibles dans le résumé
         if: failure()
         run: |
-          msg=$(grep -E '^(FAILED|ERROR) |^E  |^[^ ]+\.py:[0-9]+: ' pytest.log | head -80 \
-                | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
+          [ -f pytest.log ] || exit 0
+          msg=$(grep -E '^(FAILED|ERROR) |^E  |^[^ ]+\.py:[0-9]+: |Required test coverage' \
+                pytest.log | head -80 | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
           echo "::error title=pytest::${msg:-voir le journal du job}"
       - name: Dépendances vulnérables (pip-audit)
-        continue-on-error: true      # DIAGNOSTIC
-        run: |
-          rc=0; pip-audit --progress-spinner off --skip-editable > audit.log 2>&1 || rc=$?
-          body=$(tail -c 20000 audit.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
-          echo "::notice title=pip-audit rc=$rc::$body"; exit $rc
+        run: pip-audit --progress-spinner off --skip-editable
 
   docker:
     name: Docker (build, démarrage sans .env, analyse)
@@ -153,14 +137,10 @@ jobs:
           test "$(docker inspect -f '{{.RestartCount}}' tradebot)" = "0"
           docker compose logs --tail 20
       - name: Analyse de l'image (Trivy, HIGH/CRITICAL corrigeables)
-        continue-on-error: true      # DIAGNOSTIC
         run: |
-          rc=0
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
             image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
-            --no-progress --format table tradebot:local > trivy.log 2>&1 || rc=$?
-          body=$(tail -c 20000 trivy.log | sed ':a;N;$!ba;s/%/%25/g;s/\r//g;s/\n/%0A/g')
-          echo "::notice title=trivy rc=$rc::$body"; exit $rc
+            --no-progress tradebot:local
       - name: Arrêt propre (SIGTERM)
         if: always()
         run: docker compose down -v
