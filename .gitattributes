@@ -1,0 +1,5 @@
+# Fins de ligne LF partout : les scripts et la config tournent sur le VPS Linux
+* text=auto eol=lf
+*.pdf binary
+*.png binary
+*.db binary

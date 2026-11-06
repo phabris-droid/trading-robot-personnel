@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tradebot</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; background: #0f1115; color: #e6e6e6; }
+  .badge { display: inline-block; padding: .3rem .8rem; border-radius: 6px; font-weight: 700; }
+  .demo { background: #1f7a3a; } .live { background: #b3261e; }
+  button.danger { background: #b3261e; color: #fff; border: 0; padding: .8rem 1.2rem; border-radius: 6px; }
+</style>
+</head>
+<body>
+  <span id="mode" class="badge demo">DÉMO</span> <span id="status">—</span>
+  <!-- capital, courbe, positions, trades, événements : rafraîchis toutes les 10 s -->
+  <p><button id="pause">Pause</button> <button id="resume">Reprendre</button>
+     <button id="kill" class="danger">ARRÊT D'URGENCE</button></p>
+</body>
+</html>

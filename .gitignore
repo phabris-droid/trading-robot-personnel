@@ -1,3 +1,17 @@
+# --- Projet tradebot ---
+.env
+data/*.db
+data/*.db-*
+data/backups/*
+!data/backups/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.env.*
+!.env.example
+
+# --- Modèle Python GitHub ---
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

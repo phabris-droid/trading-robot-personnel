@@ -1,0 +1,39 @@
+[project]
+name = "tradebot"
+version = "2.0.0"
+description = "Robot de trading crypto (Binance spot) et forex (Capital.com CFD)"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "requests>=2.32.4",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "PyYAML>=6.0",
+    "fastapi>=0.115",
+    "starlette>=0.49.1",
+    "uvicorn>=0.30",
+    "python-telegram-bot>=21.0",
+    "anthropic>=0.40",
+    "feedparser>=6.0",
+    "APScheduler>=3.10,<4",
+    "structlog>=24.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "hypothesis>=6", "respx>=0.21", "ruff>=0.5", "mypy>=1.10"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100

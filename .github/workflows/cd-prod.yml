@@ -1,0 +1,99 @@
+# Déploiement continu : push sur prod → CI complète → validation manuelle → VPS.
+#
+# Sécurité (argent réel en jeu) :
+#  - le job « deploy » utilise l'environnement GitHub « production » : y activer
+#    « Required reviewers » pour qu'aucun déploiement ne parte sans ton clic ;
+#  - le .env n'est jamais transmis : il reste sur le VPS (git reset ne touche pas
+#    les fichiers ignorés, data/ et ses bases SQLite sont conservés) ;
+#  - SIGTERM + stop_grace_period 90 s : le cycle en cours se termine proprement.
+#
+# Secrets à créer dans Settings → Environments → production :
+#   VPS_HOST         ex. 213.156.135.38
+#   VPS_USER         ex. trader
+#   VPS_SSH_KEY      clé privée dédiée au déploiement (ed25519)
+#   VPS_KNOWN_HOSTS  sortie de : ssh-keyscan -t ed25519 213.156.135.38
+# Variable (facultative) : VPS_APP_DIR (défaut /opt/tradebot)
+name: CD prod
+
+on:
+  push:
+    branches: [prod]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false     # ne jamais interrompre un déploiement en cours
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Déploiement sur le VPS
+    needs: ci
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    timeout-minutes: 20
+    env:
+      APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/tradebot' }}
+    steps:
+      - name: Vérifier la présence des secrets
+        env:
+          H: ${{ secrets.VPS_HOST }}
+          U: ${{ secrets.VPS_USER }}
+          K: ${{ secrets.VPS_SSH_KEY }}
+          KH: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          manquants=""
+          [ -z "$H" ] && manquants="$manquants VPS_HOST"
+          [ -z "$U" ] && manquants="$manquants VPS_USER"
+          [ -z "$K" ] && manquants="$manquants VPS_SSH_KEY"
+          [ -z "$KH" ] && manquants="$manquants VPS_KNOWN_HOSTS"
+          if [ -n "$manquants" ]; then
+            echo "::error::Secrets manquants dans l'environnement production :$manquants"
+            exit 1
+          fi
+
+      - name: Préparer SSH
+        env:
+          K: ${{ secrets.VPS_SSH_KEY }}
+          KH: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$K" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$KH" > ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts
+
+      - name: Mettre à jour et redémarrer le robot
+        env:
+          H: ${{ secrets.VPS_HOST }}
+          U: ${{ secrets.VPS_USER }}
+          SHA: ${{ github.sha }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "$U@$H" \
+            "APP_DIR='$APP_DIR' SHA='$SHA' bash -s" <<'EOS'
+          set -euo pipefail
+          cd "$APP_DIR"
+          test -f .env || { echo "ERREUR : $APP_DIR/.env absent sur le VPS"; exit 1; }
+          git fetch --quiet origin prod
+          git checkout --quiet prod
+          git reset --hard "$SHA"
+          docker compose up -d --build
+          echo "Attente du healthcheck..."
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/health >/dev/null; then
+              echo "Robot en ligne (commit $SHA)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "ERREUR : /health ne répond pas après 150 s"
+          docker compose logs --tail 80 tradebot
+          exit 1
+          EOS
+
+      - name: Nettoyer la clé
+        if: always()
+        run: rm -f ~/.ssh/id_deploy
