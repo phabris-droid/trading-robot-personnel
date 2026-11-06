@@ -25,6 +25,11 @@ def _start_dashboard(port: int) -> threading.Thread:
     return thread
 
 
+def _alert(level: str, message: str) -> None:
+    """Alerte avant le démarrage du moteur (Telegram à l'étape 8)."""
+    print(f"[{level.upper()}] {message}", file=sys.stderr, flush=True)
+
+
 def _connectors(settings, journal, env) -> dict:
     """Fonctions de connexion des plateformes (relancées toutes les 5 min en cas d'échec).
     Capital.com reste désactivé tant que l'étape 3 n'est pas faite."""
@@ -45,7 +50,7 @@ def main() -> int:
     env = dict(os.environ)
     try:
         settings = load_settings(env=env)
-        journal = Journal.from_settings(settings)
+        journal = Journal.from_settings(settings, on_alert=_alert)
     except (ConfigError, JournalError) as exc:
         print(f"Démarrage refusé : {exc}", file=sys.stderr)
         return 2

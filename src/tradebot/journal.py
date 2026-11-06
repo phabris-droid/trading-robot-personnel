@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import sqlite3
 import threading
@@ -162,7 +163,8 @@ class _Op:
 # --- Journal --------------------------------------------------------------------------------
 
 class Journal:
-    def __init__(self, path: str | Path, mode: str, clock: Callable[[], float] = time.time):
+    def __init__(self, path: str | Path, mode: str, clock: Callable[[], float] = time.time,
+                 on_alert: Callable[[str, str], None] | None = None):
         if mode not in ("demo", "live"):
             raise JournalError(f"mode inconnu : {mode}")
         self.path = Path(path)
@@ -173,10 +175,24 @@ class Journal:
         self._pending: list[_Op] = []
         self.dropped = 0                 # écritures secondaires abandonnées (file pleine)
         self.rejected: list[_Op] = []    # écritures refusées par le schéma
+        self._on_alert = on_alert
         try:
             self._ensure_connection()
-        except JournalUnavailable:
-            pass  # démarrage en mémoire : la base sera rattrapée plus tard
+        except JournalUnavailable as exc:
+            # démarrage en mémoire : la base sera rattrapée plus tard, mais on alerte AUSSITÔT
+            self._report("critical", f"journal {self.path.name} indisponible au démarrage : "
+                                     f"{exc.cause}")
+
+    def _report(self, level: str, message: str) -> None:
+        """Erreur du journal : toujours journalisée (logging) et alertée si possible."""
+        log = logging.getLogger("tradebot.journal")
+        log.log(logging.CRITICAL if level == "critical" else logging.ERROR, message)
+        if self._on_alert is not None:
+            try:
+                self._on_alert(level, message)
+            # une alerte ne doit jamais casser le journal
+            except Exception:  # noqa: BLE001
+                log.exception("alerte du journal impossible")
 
     @classmethod
     def from_settings(cls, settings, **kw) -> Journal:
@@ -306,6 +322,9 @@ class Journal:
                 raise JournalUnavailable(str(exc), len(self._pending)) from None
             self._pending.clear()
             self.rejected.extend(rejected)
+            for op in rejected:
+                self._report("error", "écriture refusée par le schéma du journal : "
+                                      f"{op.sql.split('(')[0].strip()}")
             if any(op in rejected for op in ops):
                 raise ValueError("écriture refusée par le schéma du journal")
 

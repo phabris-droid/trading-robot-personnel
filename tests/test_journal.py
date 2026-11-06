@@ -313,3 +313,32 @@ def test_protection_reference_is_kept(db):
     _open_pos(j)
     j.set_protection("p1", "p1-o2")
     assert j.open_positions()[0]["protection_ref"] == "p1-o2"
+
+
+# --- m5 : erreurs du journal toujours signalées ---------------------------------------------
+
+def test_unavailable_at_start_alerts_immediately(db):
+    db.parent.mkdir(parents=True)
+    db.write_bytes(b"pas une base" * 100)
+    alerts = []
+    j = Journal(db, "demo", on_alert=lambda lvl, msg: alerts.append((lvl, msg)))
+    assert not j.available
+    assert alerts and alerts[0][0] == "critical" and "démarrage" in alerts[0][1]
+
+
+def test_rejected_write_is_logged_and_alerted(db, caplog):
+    alerts = []
+    j = Journal(db, "demo", on_alert=lambda lvl, msg: alerts.append(lvl))
+    with caplog.at_level("ERROR", logger="tradebot.journal"), pytest.raises(ValueError):
+        j._write(_Op("INSERT INTO positions (id) VALUES ('x')", (), critical=True))
+    assert alerts == ["error"]
+    assert "refusée par le schéma" in caplog.text
+
+
+def test_failing_alert_never_breaks_the_journal(db):
+    def broken(_lvl, _msg):
+        raise RuntimeError("Telegram injoignable")
+    j = Journal(db, "demo", on_alert=broken)
+    with pytest.raises(ValueError):
+        j._write(_Op("INSERT INTO positions (id) VALUES ('x')", (), critical=True))
+    j.log_event("info", "toujours utilisable")
