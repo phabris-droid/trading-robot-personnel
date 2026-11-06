@@ -405,9 +405,15 @@ class BinanceSpot(Broker):
 
     def _place_oco(self, pos: BinancePosition, qty: Decimal) -> None:
         f = self.filters(pos.symbol)
-        stop = _ceil(Decimal(str(pos.stop)), f.tick_size)            # plus proche : moins de risque
-        limit = _floor(stop * (1 - self.stop_limit_offset), f.tick_size)
+        # achat : stop arrondi vers le BAS (jamais au-dessus du stop calculé), objectif vers le
+        # bas (sens prudent : plus facile à atteindre)
+        stop = _floor(Decimal(str(pos.stop)), f.tick_size)
         target = _floor(Decimal(str(pos.target)), f.tick_size)
+        bid, _ask = self.quote(pos.symbol)
+        if stop >= Decimal(str(bid)):
+            # le prix est déjà au stop : un STOP_LOSS_LIMIT serait refusé -> un cran sous le bid
+            stop = _floor(Decimal(str(bid)) - f.tick_size, f.tick_size)
+        limit = _floor(stop * (1 - self.stop_limit_offset), f.tick_size)
         pos.oco_seq += 1
         list_id = f"{pos.client_id}-o{pos.oco_seq}"
         params = {

@@ -151,7 +151,7 @@ def test_quantity_and_prices_are_rounded_to_symbol_filters(mock, bn):
     p = _params(oco.calls.last)
     assert p["side"] == "SELL"
     assert p["quantity"] == "0.00122"            # frais prélevés en BTC déduits
-    assert p["belowStopPrice"] == "59000.01"     # stop arrondi vers l'entrée
+    assert p["belowStopPrice"] == "59000"        # stop arrondi vers le bas (achat)
     assert p["belowPrice"] == "58705"            # stop-limit 0,5 % sous le stop
     assert p["abovePrice"] == "61000"
     assert p["belowType"] == "STOP_LOSS_LIMIT" and p["aboveType"] == "LIMIT_MAKER"
@@ -607,3 +607,26 @@ def test_from_settings_passes_configured_binance_markets():
     s = load_settings("config/config.yaml")
     bn = BinanceSpot.from_settings(s, {"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"})
     assert bn.symbols == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+
+
+# --- m4 : arrondi prudent et stop toujours sous le prix acheteur ----------------------------
+
+def test_stop_is_never_rounded_above_computed_stop(mock, bn):
+    _orders_route(mock)
+    oco = mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(json={})
+    bn.open_position("BTCUSDT", "buy", 0.00123, 59000.009, 61000.009, "t1")
+    p = _params(oco.calls.last)
+    assert p["belowStopPrice"] == "59000"         # 59000,009 -> 59000,00 (jamais 59000,01)
+    assert p["abovePrice"] == "61000"
+
+
+def test_stop_above_bid_is_recalculated_before_sending(mock, bn):
+    oco = _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(400, json=NOT_FOUND)
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00122"))
+    mock.get(host=LIVE, path="/api/v3/ticker/bookTicker").respond(
+        json={"bidPrice": "58000.00", "askPrice": "58001.00"})   # le prix est passé sous le stop
+    assert bn.ensure_stop("t1") == "replaced"
+    p = _params(oco.calls.last)
+    assert p["belowStopPrice"] == "57999.99"      # un cran sous le prix acheteur
+    assert p["belowPrice"] == "57709.99"
