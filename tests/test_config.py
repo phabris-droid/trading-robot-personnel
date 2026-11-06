@@ -141,3 +141,44 @@ def test_text_is_never_accepted_as_number_or_boolean(tmp_path, mutate, expected)
 def test_integer_is_accepted_where_a_decimal_is_expected(tmp_path):
     s = load_settings(_write(tmp_path, _set(["risk"], "risk_per_trade_pct", 1)))
     assert s.risk.risk_per_trade_pct == 1.0
+
+
+# --- m8 : .env local sans jamais écraser l'environnement ------------------------------------
+
+def test_env_file_completes_but_never_overrides_environment(tmp_path):
+    from tradebot.settings import load_env
+
+    f = tmp_path / ".env"
+    f.write_text("BINANCE_API_KEY=depuis_fichier\nDASHBOARD_USER=admin\n# commentaire\n",
+                 encoding="utf-8")
+    env = load_env(f, environ={"BINANCE_API_KEY": "depuis_environnement"})
+    assert env["BINANCE_API_KEY"] == "depuis_environnement"
+    assert env["DASHBOARD_USER"] == "admin"
+
+
+def test_missing_env_file_is_not_an_error(tmp_path):
+    from tradebot.settings import load_env
+
+    assert load_env(tmp_path / "absent.env", environ={"A": "1"}) == {"A": "1"}
+
+
+def test_load_env_does_not_modify_os_environ(tmp_path, monkeypatch):
+    import os
+
+    from tradebot.settings import load_env
+
+    monkeypatch.delenv("TRADEBOT_TEST_SECRET", raising=False)
+    f = tmp_path / ".env"
+    f.write_text("TRADEBOT_TEST_SECRET=x\n", encoding="utf-8")
+    assert load_env(f)["TRADEBOT_TEST_SECRET"] == "x"
+    assert "TRADEBOT_TEST_SECRET" not in os.environ
+
+
+def test_live_mode_confirmation_can_come_from_env_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CONFIRM_LIVE_TRADING", raising=False)
+    monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
+    (tmp_path / ".env").write_text("CONFIRM_LIVE_TRADING=OUI\nDASHBOARD_PASSWORD=" + "x" * 12,
+                                   encoding="utf-8")
+    p = _write(tmp_path, lambda r: r.update(mode="live"))
+    assert load_settings(p).mode == "live"

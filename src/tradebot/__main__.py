@@ -8,7 +8,7 @@ import sys
 import threading
 
 from tradebot.journal import Journal, JournalError
-from tradebot.settings import ConfigError, load_settings
+from tradebot.settings import ConfigError, load_env, load_settings
 
 
 def _start_dashboard(port: int) -> threading.Thread:
@@ -47,7 +47,7 @@ def _connectors(settings, journal, env) -> dict:
 
 
 def main() -> int:
-    env = dict(os.environ)
+    env = load_env()          # environnement + .env local, sans rien écraser
     try:
         settings = load_settings(env=env)
         journal = Journal.from_settings(settings, on_alert=_alert)

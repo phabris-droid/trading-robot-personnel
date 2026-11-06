@@ -301,8 +301,23 @@ def _french(err: ValidationError) -> str:
     return "configuration invalide\n" + "\n".join(lines)
 
 
+def load_env(path: str | Path = ".env", environ: dict | None = None) -> dict[str, str]:
+    """Variables d'environnement complétées par le fichier .env local (hors Docker).
+    Une variable déjà définie dans l'environnement n'est JAMAIS écrasée par le fichier.
+    os.environ n'est pas modifié : les secrets restent dans le dictionnaire renvoyé."""
+    from dotenv import dotenv_values
+
+    env = dict(os.environ if environ is None else environ)
+    p = Path(path)
+    if p.is_file():
+        for key, value in dotenv_values(p).items():
+            if value is not None and key not in env:
+                env[key] = value
+    return env
+
+
 def load_settings(path: str | Path = "config/config.yaml", env: dict | None = None) -> Settings:
-    env = os.environ if env is None else env
+    env = load_env() if env is None else env
     try:
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         settings = Settings.model_validate(raw)
