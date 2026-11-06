@@ -582,3 +582,27 @@ def test_ip_ban_without_duration_lasts_5_minutes(mock, bn):
     with pytest.raises(IpBanned):
         bn.balances()
     assert bn.banned_until == NOW + 300
+
+
+# --- m3 : devise de cotation lue, jamais supposée --------------------------------------------
+
+def test_equity_uses_quote_asset_of_configured_markets(mock):
+    info = {"symbols": [{**EXCHANGE_INFO["symbols"][0], "symbol": "BTCUSDC",
+                         "quoteAsset": "USDC"}]}
+    mock.get(host=DEMO, path="/api/v3/exchangeInfo").respond(json=info)
+    mock.get(host=DEMO, path="/api/v3/account").respond(json={"balances": [
+        {"asset": "USDC", "free": "100", "locked": "5"},
+        {"asset": "USDT", "free": "50", "locked": "0"},     # pas une devise du robot
+        {"asset": "BTC", "free": "0.5", "locked": "0"}]})   # avoir personnel
+    bn = BinanceSpot("cle", SECRET, f"https://{DEMO}", f"https://{LIVE}",
+                     client=httpx.Client(), clock=lambda: NOW, symbols=["BTCUSDC"])
+    assert bn.quote_assets() == {"USDC"}
+    assert bn.equity() == pytest.approx(105.0)
+
+
+def test_from_settings_passes_configured_binance_markets():
+    from tradebot.settings import load_settings
+
+    s = load_settings("config/config.yaml")
+    bn = BinanceSpot.from_settings(s, {"BINANCE_API_KEY": "k", "BINANCE_API_SECRET": "s"})
+    assert bn.symbols == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]

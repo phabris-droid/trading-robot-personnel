@@ -152,9 +152,11 @@ class BinanceSpot(Broker):
                  stop_limit_offset_pct: float = 0.5, *, client: httpx.Client | None = None,
                  recv_window: int = 5000, max_retries: int = 3,
                  sleep: Callable[[float], None] = time.sleep,
-                 clock: Callable[[], float] = time.time, baseline: dict | None = None):
+                 clock: Callable[[], float] = time.time, baseline: dict | None = None,
+                 symbols: list[str] | None = None):
         if not api_key or not api_secret:
             raise BrokerError("clés API Binance absentes")
+        self.symbols: list[str] = list(symbols or [])   # marchés configurés (capital)
         self._key = api_key
         self._secret = api_secret.encode()
         self.trading_url = trading_url.rstrip("/")
@@ -178,8 +180,9 @@ class BinanceSpot(Broker):
     def from_settings(cls, settings, env: dict, **kw) -> BinanceSpot:
         cfg = settings.platforms.binance
         url = cfg.trading_url_live if settings.mode == "live" else cfg.trading_url_demo
+        symbols = [m.symbol for m in settings.markets if m.platform == "binance" and m.enabled]
         return cls(env.get("BINANCE_API_KEY", ""), env.get("BINANCE_API_SECRET", ""), url,
-                   cfg.market_data_url, cfg.stop_limit_offset_pct, **kw)
+                   cfg.market_data_url, cfg.stop_limit_offset_pct, symbols=symbols, **kw)
 
     # --- transport --------------------------------------------------------------------------
 
@@ -352,11 +355,22 @@ class BinanceSpot(Broker):
                 out[asset] = float(extra)
         return out
 
+    def quote_assets(self) -> set[str]:
+        """Devises de cotation (quoteAsset) des marchés configurés et des positions suivies."""
+        symbols = set(self.symbols) | {p.symbol for p in self._positions.values()
+                                       if p.status != "closed"}
+        return {self.filters(s).quote_asset for s in symbols}
+
     def equity(self) -> float:
-        """Capital du robot : USDT + valeur des positions suivies (avoirs personnels exclus)."""
+        """Capital du robot : soldes des devises de cotation des marchés configurés (lues dans
+        exchangeInfo, jamais supposées) + valeur des positions suivies. Les avoirs personnels
+        en actifs de base ne sont pas comptés. Plusieurs devises de cotation (ex. USDT et USDC)
+        sont additionnées comme équivalentes (limite connue, CDC §11)."""
         bal = self.balances()
-        free, locked = bal.get("USDT", (0.0, 0.0))
-        total = free + locked
+        total = 0.0
+        for asset in self.quote_assets():
+            free, locked = bal.get(asset, (0.0, 0.0))
+            total += free + locked
         for pos in self._positions.values():
             if pos.status != "closed":
                 bid, _ = self.quote(pos.symbol)
