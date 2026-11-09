@@ -62,7 +62,7 @@ def test_owner_from_another_address_passes_during_an_attack(client, clock):
 
 def test_client_address_behind_the_local_proxy_comes_from_x_forwarded_for(client, clock):
     via_proxy = TestClient(app, client=("172.18.0.1", 4444))
-    direct = TestClient(app, client=("203.0.113.9", 4444))
+    direct = TestClient(app, client=("93.184.216.34", 4444))      # adresse publique
     via_proxy.get("/", auth=("admin", "faux"), headers={"X-Forwarded-For": "203.0.113.50"})
     assert via_proxy.get("/", auth=GOOD,
                          headers={"X-Forwarded-For": "198.51.100.7"}).status_code == 200
