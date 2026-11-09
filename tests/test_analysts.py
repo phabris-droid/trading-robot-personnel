@@ -389,3 +389,16 @@ def test_crypto_announcement_currencies_come_from_config():
     cache = NewsCache(cfg, clock=lambda: T0)
     cache.events = [ecb]
     assert NewsWatch(cfg, cache).review(_ctx(symbol="BTCUSDT")).blocked is True
+
+
+def test_decision_data_is_sent_whole_never_truncated_json():
+    """Sécurité n° 13 : les données de décision arrivent entières (JSON lisible)."""
+    import json as _json
+    import re as _re
+
+    ai, client = _ai()
+    ai.review(_ctx(analyses={f"conseiller_{i}": f"analyse numéro {i} : RAS" for i in range(12)}))
+    prompt = client.calls[-1]["messages"][0]["content"]
+    body = _re.search(r"<donnees>\n(.*)\n</donnees>", prompt, _re.S).group(1)
+    data = _json.loads(body)
+    assert len(body) > 200 and data["objectif"] == 104.0 and len(data["analyses"]) == 12

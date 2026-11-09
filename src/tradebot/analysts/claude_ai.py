@@ -25,6 +25,7 @@ from tradebot.analysts.base import Advisor, AdvisorContext, Verdict
 MAX_TOKENS = 300
 MAX_TITLE = 200
 MAX_TITLES = 40
+MAX_DATA = 4000                  # S13 : données chiffrées transmises en entier (bornées)
 
 SYSTEM_DECISION = (
     "Tu es un second avis de contrôle des risques pour un robot de trading. Les règles ont "
@@ -49,11 +50,12 @@ SYSTEM_NEWS = (
 )
 
 
-def sanitize(text: str) -> str:
-    """Titre utilisable comme donnée : balises neutralisées, contrôle retiré, longueur bornée."""
+def sanitize(text: str, limit: int = MAX_TITLE) -> str:
+    """Texte utilisable comme donnée : balises neutralisées, contrôle retiré, longueur bornée
+    (titre : 200 caractères ; données et résumés : `limit`, S13 — jamais un JSON tronqué)."""
     text = re.sub(r"[\x00-\x1f\x7f]", " ", str(text))
     text = text.replace("<", "‹").replace(">", "›")
-    return text[:MAX_TITLE].strip()
+    return text[:limit].strip()
 
 
 def _json_from(text: str) -> dict:
@@ -132,7 +134,8 @@ class ClaudeAdvisor(Advisor):
         data = {"marche": ctx.symbol, "plateforme": ctx.platform, "strategie": ctx.strategy,
                 "sens": ctx.side, "entree": ctx.entry, "stop": ctx.stop, "objectif": ctx.target,
                 "risque_candidat_pct": ctx.risk_pct, "analyses": ctx.analyses}
-        prompt = f"<donnees>\n{sanitize(json.dumps(data, ensure_ascii=False, default=str))}\n</donnees>"
+        payload = sanitize(json.dumps(data, ensure_ascii=False, default=str), MAX_DATA)
+        prompt = f"<donnees>\n{payload}\n</donnees>"
         try:
             answer = _json_from(self._call(SYSTEM_DECISION, prompt))
             decision = str(answer.get("decision", "")).lower()
@@ -169,10 +172,10 @@ class ClaudeAdvisor(Advisor):
         jamais d'instruction suivie ; None si l'IA est indisponible."""
         if not self.enabled or not self.news.take():
             return None
-        prompt = (f"<donnees>\n{sanitize(figures)}\n</donnees>\n"
-                  f"<titres>\n{sanitize(headlines)}\n</titres>")
+        prompt = (f"<donnees>\n{sanitize(figures, MAX_DATA)}\n</donnees>\n"
+                  f"<titres>\n{sanitize(headlines, MAX_DATA)}\n</titres>")
         try:
             text = self._call(SYSTEM_SUMMARY, prompt)
         except Exception:  # noqa: BLE001
             return None
-        return sanitize(text)[:MAX_SUMMARY] or None
+        return sanitize(text, MAX_SUMMARY) or None
