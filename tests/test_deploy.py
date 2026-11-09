@@ -72,3 +72,12 @@ def test_containers_hardening_matches_cdc():
         assert "no-new-privileges:true" in svc["security_opt"], name
         assert all(p.startswith("127.0.0.1:") for p in svc["ports"]), name
         assert svc["stop_grace_period"] == "90s", name
+
+
+def test_backup_and_audit_cover_both_docker_and_systemd_modes():
+    """K4 : la sauvegarde et l'audit fonctionnent aussi en mode de repli systemd."""
+    harden = _read("harden_vps.sh")
+    assert "docker volume inspect tradebot-data" in harden
+    assert "/opt/tradebot/data" in harden and "--network none" in harden
+    audit = _read("audit_vps.sh")
+    assert "systemctl is-active --quiet tradebot" in audit and "mode de repli" in audit

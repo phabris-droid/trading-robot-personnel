@@ -156,12 +156,21 @@ fi
 chmod 600 "$BACKUP_PASS"
 cat > "$BACKUP_BIN" <<EOF
 #!/usr/bin/env bash
-# Sauvegarde chiffrée du volume Docker tradebot-data (harden_vps.sh, CDC §8).
+# Sauvegarde chiffrée des données du robot (harden_vps.sh, CDC §8) : volume Docker
+# tradebot-data en mode normal, ou /opt/tradebot/data en mode de repli systemd (K4).
 set -euo pipefail
 stamp=\$(date -u +%Y-%m-%d)
-docker run --rm -v tradebot-data:/data:ro alpine:3.20 tar czf - -C /data . \\
-  | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-file "$BACKUP_PASS" \\
-      -o "$BACKUP_DIR/tradebot-\$stamp.tgz.gpg"
+if docker volume inspect tradebot-data >/dev/null 2>&1; then
+  archive() { docker run --rm --network none -v tradebot-data:/data:ro alpine:3.20 \\
+                tar czf - -C /data .; }
+elif [ -d /opt/tradebot/data ]; then
+  archive() { tar czf - -C /opt/tradebot/data .; }
+else
+  echo "aucune donnée du robot à sauvegarder" >&2
+  exit 1
+fi
+archive | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-file "$BACKUP_PASS" \\
+  -o "$BACKUP_DIR/tradebot-\$stamp.tgz.gpg"
 find "$BACKUP_DIR" -name 'tradebot-*.tgz.gpg' -mtime +14 -delete
 EOF
 chmod 700 "$BACKUP_BIN"

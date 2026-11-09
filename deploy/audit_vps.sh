@@ -76,8 +76,21 @@ if docker inspect tradebot >/dev/null 2>&1; then
   else
     fail "/health ne répond pas (moteur bloqué ?)"
   fi
+elif systemctl is-active --quiet tradebot 2>/dev/null; then
+  # K4 : mode de repli systemd (install_systemd.sh)
+  pass "service systemd tradebot actif (mode de repli sans Docker)"
+  if systemctl show tradebot -p ProtectSystem --value 2>/dev/null | grep -qx strict; then
+    pass "service : système en lecture seule sauf data/"
+  else
+    fail "service : ProtectSystem=strict absent"
+  fi
+  if curl -fsS --max-time 5 http://127.0.0.1:8080/health >/dev/null 2>&1; then
+    pass "/health : moteur vivant"
+  else
+    fail "/health ne répond pas (moteur bloqué ?)"
+  fi
 else
-  fail "conteneur tradebot introuvable"
+  fail "robot introuvable (ni conteneur Docker ni service systemd tradebot)"
 fi
 if [ -f "$APP_DIR/.env" ]; then
   same "$(stat -c %a "$APP_DIR/.env")" "600" ".env en 600" ".env lisible par d'autres : doit être en 600"
