@@ -102,6 +102,8 @@ class BinancePosition:
     exit_seq: int = 0
     status: str = "open"   # open | unprotected | inconsistent | closed
     exit_price: float = 0.0   # A6 : prix moyen réellement exécuté à la sortie (0 = inconnu)
+    exit_uncertain: str = ""  # C2 : identifiant d'une vente de sortie au statut incertain
+    exit_not_found: int = 0   # C2 : recherches infructueuses de cette vente
 
 
 BAN_DEFAULT_S = 300.0             # 418 sans durée indiquée : 5 min sans aucune requête
@@ -526,17 +528,49 @@ class BinanceSpot(Broker):
         """Vente au marché de `qty`. La position n'est déclarée fermée que si la vente
         exécutée couvre la quantité suivie ; sinon elle devient « incohérente »."""
         f = self.filters(pos.symbol)
+        if pos.exit_uncertain and self._resolve_uncertain_exit(pos):
+            return                               # la vente précédente a été exécutée
         if qty < f.min_qty or qty <= 0:
             pos.status = "inconsistent"
             raise PositionInconsistent(pos.id, f"quantité vendable {qty} sous le minimum "
                                                f"({f.min_qty}) pour une position de {pos.qty}")
         pos.exit_seq += 1
+        cid = f"{pos.client_id}-x{pos.exit_seq}"
         try:
-            fill = self._market(pos.symbol, "sell", qty, f"{pos.client_id}-x{pos.exit_seq}")
+            fill = self._market(pos.symbol, "sell", qty, cid)
+        except OrderUncertain:
+            pos.exit_uncertain, pos.exit_not_found = cid, 0   # cherchée avant tout renvoi
+            raise
         except OrderRejected as exc:
             pos.status = "inconsistent"
             raise PositionInconsistent(pos.id, f"vente refusée : {exc}") from None
-        self._apply_exit(pos, Decimal(str(fill.get("executedQty", "0"))), fill)
+        executed = _dec(fill.get("executedQty"))
+        if executed is None:                     # réponse illisible : vente peut-être faite
+            pos.exit_uncertain, pos.exit_not_found = cid, 0
+            raise OrderUncertain(cid, "réponse de vente sans quantité exécutée lisible")
+        self._apply_exit(pos, executed, fill)
+
+    def _resolve_uncertain_exit(self, pos: BinancePosition) -> bool:
+        """C2 : vente de sortie incertaine recherchée AVANT toute nouvelle vente (sinon une
+        vente déjà exécutée serait répétée sur les avoirs personnels). True si exécutée ;
+        False si refusée, ou introuvable deux fois de suite (jamais exécutée) ; sinon
+        OrderUncertain (on recommencera au prochain cycle)."""
+        cid = pos.exit_uncertain
+        od = self.find_order(cid, pos.symbol)
+        if od is None:
+            pos.exit_not_found += 1
+            if pos.exit_not_found < NOT_FOUND_TO_GIVE_UP:
+                raise OrderUncertain(cid, "vente de sortie introuvable, nouvelle recherche")
+            pos.exit_uncertain = ""
+            return False
+        executed = _dec(od.get("executedQty"))
+        if executed is None or (executed <= 0 and od.get("status") not in ORDER_FINAL_STATUSES):
+            raise OrderUncertain(cid, f"vente de sortie au statut {od.get('status')}")
+        pos.exit_uncertain = ""
+        if executed <= 0:
+            return False
+        self._apply_exit(pos, executed, od)          # partielle -> PositionInconsistent
+        return True
 
     def _apply_exit(self, pos: BinancePosition, executed: Decimal, fill: dict | None = None) -> None:
         f = self.filters(pos.symbol)

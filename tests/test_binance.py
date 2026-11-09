@@ -723,3 +723,38 @@ def test_partially_filled_stop_is_counted_once(mock, bn):
     assert bn.ensure_stop("t1") == "closed_no_stop"
     assert _params(orders.calls.last)["quantity"] == "0.00072"      # 0,00122 - 0,00050
     assert bn.positions() == []
+
+
+# --- C2 : vente de sortie au statut incertain -----------------------------------------------------
+
+def test_uncertain_exit_sell_is_searched_never_resent(mock, bn):
+    """Délai dépassé sur la vente : au cycle suivant, la vente est RECHERCHÉE ; exécutée, la
+    position est fermée sans seconde vente (qui toucherait les avoirs personnels)."""
+    _open(mock, bn)
+    orders = _orders_route(mock, sell=httpx.ReadTimeout("délai"))
+    _close_routes(mock, btc_free="0.50122")
+    with pytest.raises(OrderUncertain):
+        bn.close_position("t1")
+    sells = [c for c in orders.calls if c.request.url.params["side"] == "SELL"]
+    found = mock.get(host=DEMO, path="/api/v3/order").respond(json={
+        "orderId": 9, "clientOrderId": "t1-x1", "status": "FILLED", "executedQty": "0.00122",
+        "cummulativeQuoteQty": "73.2"})
+    bn.close_position("t1")
+    assert _params(found.calls.last)["origClientOrderId"] == "t1-x1"
+    assert [c for c in orders.calls if c.request.url.params["side"] == "SELL"] == sells
+    assert bn.positions() == [] and bn.exit_price("t1") == pytest.approx(60000.0)
+
+
+def test_uncertain_exit_sell_not_found_twice_is_sent_again(mock, bn):
+    _open(mock, bn)
+    orders = _orders_route(mock, sell=httpx.ReadTimeout("délai"))
+    _close_routes(mock, btc_free="0.00122")
+    with pytest.raises(OrderUncertain):
+        bn.close_position("t1")
+    mock.get(host=DEMO, path="/api/v3/order").respond(400, json=NOT_FOUND)
+    with pytest.raises(OrderUncertain):                   # 1re recherche : on attend
+        bn.close_position("t1")
+    orders = _orders_route(mock)
+    bn.close_position("t1")                               # 2e : jamais exécutée -> renvoyée
+    assert _params(orders.calls.last)["newClientOrderId"] == "t1-x2"
+    assert bn.positions() == []
