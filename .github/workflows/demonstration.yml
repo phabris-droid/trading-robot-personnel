@@ -1,0 +1,115 @@
+# Démonstration du robot (aucun vrai compte, aucun ordre réel) :
+#   1. validation historique : les 12 derniers mois de VRAIS prix Binance rejoués avec les
+#      fonctions exactes du robot (stratégies, taille, frais, spread) ;
+#   2. robot en marche : le conteneur tourne quelques minutes en mode DÉMO sans clés, on lit
+#      son tableau de bord, ses journaux, puis on l'arrête proprement.
+# Résultats dans le résumé de l'exécution (onglet « Summary »).
+#
+# Lancement : Actions → « Démonstration » → Run workflow (ou modification de ce fichier sur dev).
+# Les serveurs GitHub sont aux États-Unis, où api.binance.com est bloqué : les prix publics
+# viennent du miroir officiel data-api.binance.vision (mêmes bougies, aucune clé).
+name: Démonstration
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths: [.github/workflows/demonstration.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  historique:
+    name: Validation historique (12 mois de vrais prix)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/python-env
+      - name: Prix publics Binance (miroir officiel)
+        run: |
+          sed -i 's#market_data_url: https://api.binance.com#market_data_url: https://data-api.binance.vision#' \
+            config/config.yaml
+          grep -n "market_data_url" config/config.yaml
+      - name: Validation des 6 marchés (CDC §3)
+        run: |
+          # code de sortie 1 si un marché est « A_REVOIR » : c'est un résultat, pas une panne
+          python scripts/validate_markets.py | tee validation.txt || true
+      - name: Détail des marchés Binance (capital de départ 100 $)
+        run: |
+          for s in BTCUSDT ETHUSDT SOLUSDT; do
+            python scripts/backtest.py "$s" --capital 100 --trades 5 || true
+            echo
+          done | tee backtests.txt
+      - name: Résumé
+        run: |
+          {
+            echo "## Validation historique : 12 derniers mois, vrais prix Binance"
+            echo
+            echo "Verdict « OK » seulement si profit factor ≥ 1,1 avec au moins 20 trades (CDC §3)."
+            echo "Capital.com demande une session démo (clés) : ses marchés apparaissent sans données."
+            echo
+            echo '```'
+            cat validation.txt
+            echo '```'
+            echo
+            echo "### Derniers trades simulés par marché (100 \$ au départ)"
+            echo
+            echo '```'
+            cat backtests.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  robot:
+    name: Robot en marche (démo sans clés, 3 min)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Construction de l'image
+        run: docker build -q -t tradebot:demo . > /dev/null
+      - name: Démarrage en mode DÉMO (sans clés : aucune plateforme, aucun ordre)
+        run: |
+          pw=$(openssl rand -hex 16)
+          echo "::add-mask::$pw"
+          echo "PW=$pw" >> "$GITHUB_ENV"
+          docker run -d --name tradebot -e DASHBOARD_PASSWORD="$pw" \
+            --read-only --tmpfs /tmp --tmpfs /app/data:uid=10001,gid=10001 \
+            --cap-drop ALL --security-opt no-new-privileges:true \
+            -p 127.0.0.1:8080:8080 tradebot:demo
+          for _ in $(seq 1 30); do curl -fsS --max-time 5 http://127.0.0.1:8080/health && break; sleep 3; done
+          echo
+          sleep 150                       # quelques cycles du moteur
+      - name: État lu sur le tableau de bord
+        run: |
+          bon="admin:$PW"
+          curl -fsS --max-time 5 http://127.0.0.1:8080/health | tee health.json
+          echo
+          curl -fsS --max-time 5 --user "$bon" http://127.0.0.1:8080/api/state \
+            | python3 -m json.tool | tee state.json
+          code=$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)
+          echo "page sans mot de passe : HTTP $code (401 attendu)" | tee acces.txt
+      - name: Arrêt propre (SIGTERM)
+        run: |
+          docker stop -t 90 tradebot > /dev/null
+          docker logs tradebot > logs.txt 2>&1
+          tail -n 40 logs.txt
+      - name: Résumé
+        if: always()
+        run: |
+          {
+            echo "## Robot en marche : 3 minutes en mode DÉMO"
+            echo
+            echo "Sans clés, les plateformes restent déconnectées (nouvel essai toutes les 5 min) :"
+            echo "le robot tourne, se surveille et refuse tout ordre, comme prévu."
+            echo
+            echo "### Contrôle de santé (/health)"
+            echo '```'; cat health.json 2>/dev/null; echo; echo '```'
+            echo "### Tableau de bord (/api/state)"
+            echo '```json'; head -n 80 state.json 2>/dev/null; echo '```'
+            echo "### Accès protégé"
+            echo '```'; cat acces.txt 2>/dev/null; echo '```'
+            echo "### Journaux du robot (JSON, dernières lignes)"
+            echo '```'; tail -n 25 logs.txt 2>/dev/null; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
