@@ -66,7 +66,7 @@ EP_POSITION = "/api/v1/positions/{deal_id}"
 EP_CONFIRM = "/api/v1/confirms/{deal_reference}"
 H_API_KEY = "X-CAP-API-KEY"
 H_CST = "CST"
-H_TOKEN = "X-SECURITY-TOKEN"
+H_SECURITY_HEADER = "X-SECURITY-TOKEN"
 F_DEAL_REFERENCE = "dealReference"
 F_DEAL_STATUS = "dealStatus"
 F_AFFECTED = "affectedDeals"
@@ -163,7 +163,7 @@ class CapitalCFD(Broker):
             raise ApiError(f"connexion Capital.com refusée (HTTP {resp.status_code})",
                            http_status=resp.status_code)
         self._cst = resp.headers.get(H_CST, "")
-        self._token = resp.headers.get(H_TOKEN, "")
+        self._token = resp.headers.get(H_SECURITY_HEADER, "")
         if not self._cst or not self._token:
             raise ApiError("connexion Capital.com : jetons de session absents")
         try:
@@ -178,7 +178,7 @@ class CapitalCFD(Broker):
             self._request("GET", EP_PING)
 
     def _headers(self) -> dict:
-        return {H_API_KEY: self._key, H_CST: self._cst, H_TOKEN: self._token}
+        return {H_API_KEY: self._key, H_CST: self._cst, H_SECURITY_HEADER: self._token}
 
     def _request(self, method: str, path: str, *, params: dict | None = None,
                  body: dict | None = None, kind: str = "read", client_id: str = ""):
