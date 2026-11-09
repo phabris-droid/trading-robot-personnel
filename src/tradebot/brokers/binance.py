@@ -535,7 +535,7 @@ class BinanceSpot(Broker):
         f = self.filters(pos.symbol)
         if self._consume_exit(pos, executed, final):     # T1 : compté une seule fois
             return "closed_by_platform"
-        free, _locked = self.balances().get(f.base_asset, (0.0, 0.0))
+        free = self._robot_free(pos, f)
         self._sell(pos, f.floor_qty(min(pos.qty, free)))   # incomplet -> PositionInconsistent
         return "closed_no_stop"
 
@@ -609,6 +609,18 @@ class BinanceSpot(Broker):
             return False
         self._apply_exit(pos, executed, od)          # partielle -> PositionInconsistent
         return True
+
+    def _robot_free(self, pos: BinancePosition, f) -> float:
+        """R03 : quantité LIBRE appartenant au robot (jamais les avoirs personnels de départ).
+        Si la quantité de la position est encore bloquée par un ordre invisible (OCO non
+        trouvé), rien n'est utilisable : jamais de second OCO ni de vente sur le reste."""
+        free, locked = self.balances().get(f.base_asset, (0.0, 0.0))
+        if locked >= pos.qty * 0.99:
+            pos.status = "inconsistent"
+            raise PositionInconsistent(pos.id, f"{locked} {f.base_asset} bloqués par un ordre "
+                                               "introuvable : vérifier à la main")
+        robot_total = max(0.0, free + locked - float(self.baseline.get(f.base_asset, 0.0)))
+        return min(free, robot_total)
 
     def _consume_exit(self, pos: BinancePosition, executed: Decimal,
                       fill: dict | None = None) -> bool:
@@ -740,6 +752,8 @@ class BinanceSpot(Broker):
             pos.oco_uncertain = False            # T7 : une seconde recherche, puis on agit
             raise OrderUncertain(pos.oco_id, "OCO au statut incertain introuvable : nouvelle "
                                              "recherche au prochain cycle")
+        if oco is not None and not oco.get("listOrderStatus"):
+            raise ApiError("OCO illisible (statut absent) : rien n'est reposé ce cycle")   # R03
         if oco and oco.get("listOrderStatus") in OCO_ACTIVE:
             pos.oco_id = oco.get("listClientOrderId") or pos.oco_id
             pos.status = "open"
@@ -760,7 +774,7 @@ class BinanceSpot(Broker):
         # sortie partielle (T1) : le reste n'est plus protégé -> OCO reposé ci-dessous
         # aucune exécution vue : le stop est absent -> le reposer, sinon vendre (CDC §6)
         f = self.filters(pos.symbol)
-        free, _locked = self.balances().get(f.base_asset, (0.0, 0.0))
+        free = self._robot_free(pos, f)
         held = f.floor_qty(min(pos.qty, free))      # quantité suivie, plafonnée au solde libre
         pos.status = "unprotected"
         try:
@@ -806,7 +820,7 @@ class BinanceSpot(Broker):
             pos.status = "inconsistent"
             raise PositionInconsistent(pos.id, f"{len(still_open)} ordre(s) encore ouvert(s) "
                                                "après l'annulation de l'OCO")
-        free, _locked = self.balances().get(f.base_asset, (0.0, 0.0))
+        free = self._robot_free(pos, f)
         # quantité suivie, plafonnée au solde libre réel (jamais « solde − départ »)
         self._sell(pos, f.floor_qty(min(pos.qty, free)))
 

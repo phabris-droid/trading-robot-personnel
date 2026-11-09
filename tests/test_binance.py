@@ -877,3 +877,37 @@ def test_audit9_and_r05_unreadable_quote_after_a_filled_buy_never_loses_the_posi
         bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
     assert exc.value.closed is True
     assert _params(orders.calls.last)["side"] == "SELL"
+
+
+@pytest.mark.parametrize("answer", [
+    httpx.Response(200, json={"listClientOrderId": "t1-o1", "listOrderStatus": None,
+                              "orders": []}),                         # réponse tronquée
+    httpx.Response(400, json=NOT_FOUND),                              # OCO invisible
+])
+def test_r03_unreadable_or_invisible_oco_never_gets_a_second_oco_on_personal_btc(mock, bn,
+                                                                                 answer):
+    """Testeur adverse R03 : l'OCO du robot bloque encore ses BTC, le libre est personnel :
+    jamais de second OCO ni de vente sur les avoirs personnels."""
+    oco = _open(mock, bn)
+    bn.baseline = {"BTC": 0.5}
+    mock.get(host=DEMO, path="/api/v3/orderList").mock(return_value=answer)
+    mock.get(host=DEMO, path="/api/v3/account").respond(
+        json=_account(btc_free="0.5", btc_locked="0.00122"))
+    orders = _orders_route(mock)
+    with pytest.raises(BrokerError):
+        bn.ensure_stop("t1")
+    assert oco.call_count == 1
+    assert all(c.request.url.params["side"] == "BUY" for c in orders.calls)
+
+
+def test_r03_personal_coins_are_never_used_to_protect_or_close(mock, bn):
+    """Le BTC du robot a disparu (vendu à la main) : seuls restent les BTC personnels."""
+    oco = _open(mock, bn)
+    bn.baseline = {"BTC": 0.5}
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(400, json=NOT_FOUND)
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.5"))
+    orders = _orders_route(mock)
+    with pytest.raises(PositionInconsistent):
+        bn.ensure_stop("t1")
+    assert oco.call_count == 1
+    assert all(c.request.url.params["side"] == "BUY" for c in orders.calls)
