@@ -847,3 +847,20 @@ def test_r13_emergency_with_unreadable_attempts_still_closes_everything(tmp_path
     restarted, _, _ = _engine(tmp_path, broker, journal)
     restarted.cycle()
     assert journal.open_positions() == []
+
+
+def test_r11_unreadable_journal_during_cycles_does_not_flood_alerts(tmp_path):
+    """Testeur adverse R11 : disque plein en cours de route : au plus une alerte « journal »
+    par cycle, jamais une par écriture."""
+    from test_breakers import BrokenJournal
+
+    broker = FakeBroker(DATA)
+    j = BrokenJournal(tmp_path / "data" / "tradebot_demo.db", "demo")
+    eng, _, alerts = _engine(tmp_path, broker, j)
+    eng.cycle()
+    j.broken = True
+    for _ in range(3):
+        broker.i += 1
+        eng.cycle()
+    floods = [m for _lvl, m in alerts if "journal indisponible" in m]
+    assert 1 <= len(floods) <= 3, floods

@@ -103,9 +103,12 @@ class Engine:
             return None
         try:
             return getattr(self.journal, method)(*args, **kwargs)
-        except JournalUnavailable as exc:
+        except JournalUnavailable:
             if method != "log_event":
-                self._alert_out("critical", f"journal indisponible : {exc}")
+                # R11 : une seule alerte par panne (message stable, dédupliqué), pas une par
+                # écriture : sinon Telegram limite le débit et les vraies alertes se perdent
+                self.alert("critical", "journal indisponible : positions gérées en mémoire",
+                           key="journal")
             return None
 
     def _pause(self, market: str, reason: str) -> None:
@@ -146,6 +149,8 @@ class Engine:
             if not self.journal.flush():
                 self.alert("critical", "journal indisponible : positions gérées en mémoire",
                            key="journal")
+        if self.journal is not None and not self.journal.pending:
+            self._last_alerts.pop("journal", None)   # R11 : la prochaine panne sera signalée
         if not self._control_loaded:
             self._step("contrôle", self._reload_control)
         # ADV15 : chaque étape est isolée ; une erreur (état illisible…) n'empêche jamais
