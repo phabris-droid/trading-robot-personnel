@@ -116,7 +116,8 @@ analysts:
     forex_weekend_end_utc: "sun 22:15"     # …au dimanche 22 h 15 UTC (or compris, A4)
     correlation_groups:            # A5 : au plus 2 positions ouvertes par groupe
       crypto: [BTCUSDT, ETHUSDT, SOLUSDT]
-      dollar: [EURUSD, GBPUSD, GOLD]
+      dollar: [EURUSD, GBPUSD, GOLD]  # choix A5 ; recoupe volontairement la limite « 2 positions
+                                      # forex » des disjoncteurs (risk) : double garde, même seuil
   ai:
     enabled: true
     model: claude-haiku-5-5
