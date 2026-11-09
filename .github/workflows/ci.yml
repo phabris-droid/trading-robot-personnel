@@ -179,7 +179,10 @@ jobs:
             cp "$lock" "/tmp/$lock"
             uv pip compile pyproject.toml ${extra:+"$extra"} --python-version 3.12 \
               --python-platform x86_64-unknown-linux-gnu --no-header --quiet -o "/tmp/$lock"
-            if ! diff <(grep -v '^#' "$lock") <(grep -v '^#' "/tmp/$lock"); then
+            # S11 : le verrou porte en plus les empreintes sha256 (--require-hashes) : on
+            # compare les paquets et leurs versions exactes
+            versions() { grep -oE '^[A-Za-z0-9._-]+==[^ \\]+' "$1" | sort; }
+            if ! diff <(versions "$lock") <(versions "/tmp/$lock"); then
               echo "::error::$lock n'est plus cohérent avec pyproject.toml : le régénérer"; exit 1
             fi
           done

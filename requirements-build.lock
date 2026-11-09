@@ -1,0 +1,6 @@
+# Outil de construction du paquet, figé avec empreintes (S11) : installé avant
+#   « pip install --no-build-isolation . » (jamais une version téléchargée au hasard).
+setuptools==84.2.1 \
+    --hash=sha256:24939b84ead30ff4581918c8d5a95aafd377f6a8afc61f30ea18358a8786bfa4 \
+    --hash=sha256:3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc \
+    --hash=sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2

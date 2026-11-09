@@ -16,11 +16,13 @@ RUN useradd --uid 10001 --create-home trader
 WORKDIR /app
 
 # Dépendances d'abord, en versions exactes (couche mise en cache tant que le verrou ne change pas)
-COPY requirements.lock ./
-RUN pip install -r requirements.lock
+# S11 : chaque paquet vérifié par son empreinte sha256 (--require-hashes), outil de
+# construction figé lui aussi : aucun téléchargement non vérifié
+COPY requirements.lock requirements-build.lock ./
+RUN pip install --require-hashes -r requirements.lock -r requirements-build.lock
 COPY pyproject.toml ./
 COPY src ./src
-RUN pip install --no-deps .
+RUN pip install --no-deps --no-build-isolation .
 
 COPY config ./config
 COPY scripts ./scripts

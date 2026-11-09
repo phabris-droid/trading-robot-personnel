@@ -33,7 +33,7 @@ if command -v docker >/dev/null 2>&1 && \
    [ "$(docker ps -q --filter name='^tradebot$' 2>/dev/null)" != "" ]; then
   die "le conteneur Docker tradebot tourne : l'arrêter d'abord (docker compose down)"
 fi
-for f in pyproject.toml requirements.lock src config; do
+for f in pyproject.toml requirements.lock requirements-build.lock src config; do
   [ -e "$APP_DIR/$f" ] || die "$APP_DIR/$f absent : copier le dépôt dans $APP_DIR"
 done
 [ -f "$APP_DIR/.env" ] || die "$APP_DIR/.env absent"
@@ -45,9 +45,10 @@ if [ ! -x "$APP_DIR/.venv/bin/python" ]; then
   python3.12 -m venv "$APP_DIR/.venv"
   log "environnement Python créé"
 fi
-"$APP_DIR/.venv/bin/python" -m pip install --quiet --upgrade pip
-"$APP_DIR/.venv/bin/python" -m pip install --quiet -r "$APP_DIR/requirements.lock"
-"$APP_DIR/.venv/bin/python" -m pip install --quiet --no-deps "$APP_DIR"
+# S11 : paquets vérifiés par empreinte, aucun téléchargement non vérifié (pas de mise à jour de pip)
+"$APP_DIR/.venv/bin/python" -m pip install --quiet --require-hashes \
+  -r "$APP_DIR/requirements.lock" -r "$APP_DIR/requirements-build.lock"
+"$APP_DIR/.venv/bin/python" -m pip install --quiet --no-deps --no-build-isolation "$APP_DIR"
 
 # --- droits : seul data/ est inscriptible par le robot -------------------------------------------
 install -d -m 750 -o "$APP_USER" -g "$APP_USER" "$APP_DIR/data" "$APP_DIR/data/audits"

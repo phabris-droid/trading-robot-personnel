@@ -150,3 +150,17 @@ def test_ssh_is_limited_to_the_robot_accounts():
     """Audit sécurité n° 14 : aucun autre compte (ex. « ubuntu ») ne peut se connecter."""
     assert "AllowUsers trader deploy" in _read("harden_vps.sh")
     assert "AllowUsers" in _read("audit_vps.sh")
+
+
+def test_every_dependency_is_pinned_with_sha256_hashes_and_installed_with_require_hashes():
+    """Audit sécurité n° 11 : une version republiée ou modifiée sur PyPI est refusée."""
+    for name in ("requirements.lock", "requirements-dev.lock", "requirements-build.lock"):
+        lines = (ROOT / name).read_text(encoding="utf-8").splitlines()
+        pins = [i for i, line in enumerate(lines) if re.match(r"^[A-Za-z0-9._-]+==", line)]
+        assert pins, name
+        for i in pins:
+            assert lines[i].endswith(" \\") and lines[i + 1].strip().startswith(
+                "--hash=sha256:"), (name, lines[i])
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "--require-hashes" in dockerfile and "--no-build-isolation" in dockerfile
+    assert "--require-hashes" in _read("install_systemd.sh")
