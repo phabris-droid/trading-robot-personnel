@@ -48,6 +48,18 @@ class PlatformState:
     safety_stop: str = ""             # raison de l'arrêt de sécurité (vide = aucun)
 
 
+
+def _check_types(s: PlatformState) -> None:
+    """R15 : un état aux types faux (plus haut nul, texte à la place d'un nombre) est traité
+    comme corrompu : arrêt de sécurité prudent, jamais un disjoncteur désactivé."""
+    numbers = (s.day_start, s.peak, s.last)
+    if not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in numbers):
+        raise TypeError("nombres attendus")
+    if s.pending is not None and not isinstance(s.pending, (int, float)):
+        raise TypeError("lecture en attente illisible")
+    if not all(isinstance(x, str) for x in (s.day, s.paused_day, s.safety_stop)):
+        raise TypeError("textes attendus")
+
 class Breakers:
     def __init__(self, risk: Risk, journal=None, clock: Callable[[], float] = time.time):
         self.risk = risk
@@ -77,6 +89,7 @@ class Breakers:
         if saved:
             try:
                 state = PlatformState(**json.loads(saved))
+                _check_types(state)                 # R15 : JSON valide mais mal typé
             except (TypeError, ValueError):
                 state = PlatformState(safety_stop="état des disjoncteurs illisible dans le "
                                                   "journal : vérification manuelle")

@@ -559,6 +559,15 @@ class Engine:
                 loaded = json.loads(saved)
                 if not isinstance(loaded, dict):
                     raise ValueError("état du moteur : objet JSON attendu")
+                # R13 : compteur illisible remis à 0 (l'arrêt d'urgence continue) ; tout autre
+                # type faux = état illisible (pause prudente)
+                if not isinstance(loaded.get("attempts", 0), int) or isinstance(
+                        loaded.get("attempts"), bool):
+                    loaded["attempts"] = 0
+                if not isinstance(loaded.get("emergency", False), bool) or not isinstance(
+                        loaded.get("paused", ""), str) or not isinstance(
+                        loaded.get("markets", {}), dict):
+                    raise ValueError("état du moteur : types inattendus")
                 base.update(loaded)
             except (TypeError, ValueError):
                 # audit trading n° 12 : état illisible = prudence, jamais « aucun arrêt » :

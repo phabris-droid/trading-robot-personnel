@@ -189,3 +189,13 @@ def test_adv15_corrupt_breaker_state_is_a_prudent_safety_stop(tmp_path):
     assert br.safety_stopped("binance")
     assert br.can_enter("binance", [], 0) is not None
     assert "arret_securite" in br.update_equity("binance", 100.0)        # alerte une fois
+
+
+def test_r15_breaker_state_with_wrong_types_is_a_prudent_safety_stop(tmp_path):
+    """Testeur adverse R15 : JSON valide mais mal typé : arrêt de sécurité prudent, jamais
+    de TypeError ni de disjoncteur désactivé."""
+    j = Journal(tmp_path / "data" / "tradebot_demo.db", "demo")
+    j.set_state("breakers:binance", '{"day": "2026-11-09", "peak": null, "last": "cent"}')
+    br = Breakers(RISK, j, clock=lambda: T0)
+    assert br.safety_stopped("binance")
+    br.update_equity("binance", 100.0)

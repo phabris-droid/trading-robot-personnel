@@ -835,3 +835,15 @@ def test_r08_signal_age_uses_platform_time(tmp_path):
     eng._decide(next(m for m in SETTINGS.markets if m.symbol == "BTCUSDT"))
     assert broker.open_calls == []
     assert eng._platform_now(broker) == close + 40 * 60
+
+
+def test_r13_emergency_with_unreadable_attempts_still_closes_everything(tmp_path):
+    """Testeur adverse R13 : compteur illisible : l'arrêt d'urgence ferme quand même tout."""
+    import json as _json
+
+    broker, _eng, journal, _ = _with_positions(tmp_path, n=2)
+    journal.set_state("engine", _json.dumps({"emergency": True, "attempts": None,
+                                             "paused": "arrêt d'urgence", "markets": {}}))
+    restarted, _, _ = _engine(tmp_path, broker, journal)
+    restarted.cycle()
+    assert journal.open_positions() == []
