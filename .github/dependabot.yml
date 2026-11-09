@@ -1,0 +1,16 @@
+# Mises à jour des versions FIGÉES (empreintes des actions et des images, verrous Python) :
+# sans elles, un correctif de sécurité ne serait jamais repris. Propositions sur dev.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule: {interval: weekly}
+  - package-ecosystem: docker
+    directory: /
+    target-branch: dev
+    schedule: {interval: weekly}
+  - package-ecosystem: pip
+    directory: /
+    target-branch: dev
+    schedule: {interval: weekly}

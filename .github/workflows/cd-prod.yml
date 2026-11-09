@@ -36,6 +36,8 @@ jobs:
   publish:
     name: Publication de l'image (GHCR)
     needs: ci
+    # sécurité : un lancement manuel depuis une autre branche ne publie ni ne déploie rien
+    if: github.ref == 'refs/heads/prod'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -78,10 +80,15 @@ jobs:
       - name: 3. Analyse de vulnérabilités (Trivy, HIGH/CRITICAL corrigeables)
         env:
           REF: ${{ steps.nom.outputs.image }}:${{ github.sha }}
+        # sécurité : image d'outil figée par empreinte, lecture de l'archive (jamais le socket
+        # Docker : un outil compromis pourrait sinon modifier l'image avant sa publication)
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.2 \
-            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
-            --no-progress "$REF"
+          docker save "$REF" -o /tmp/candidate.tar
+          docker run --rm -v /tmp/candidate.tar:/image.tar:ro \
+            aquasec/trivy:0.76.2@sha256:6fa071ef8daa2e58b90cbf1710bedca91adbb3bf98693533226f442035b836a6 \
+            image --input /image.tar --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 --no-progress
+          rm -f /tmp/candidate.tar
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io

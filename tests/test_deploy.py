@@ -89,3 +89,18 @@ def test_ssh_dropin_is_read_before_cloud_init():
     text = _read("harden_vps.sh")
     assert 'SSHD_DROPIN="/etc/ssh/sshd_config.d/00-tradebot.conf"' in text
     assert 'rm -f "$SSHD_DROPIN_OLD"' in text
+
+
+def test_tool_and_base_images_are_pinned_and_trivy_never_gets_the_docker_socket():
+    """Audit sécurité n° 3 et 11 : images figées par empreinte, Trivy sans socket Docker,
+    publication réservée à la branche prod (n° 12)."""
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    cd = (ROOT / ".github" / "workflows" / "cd-prod.yml").read_text(encoding="utf-8")
+    for name in ("GITLEAKS_IMAGE", "ACTIONLINT_IMAGE", "TRIVY_IMAGE"):
+        assert re.search(rf"{name}: \S+@sha256:[0-9a-f]{{64}}", ci), name
+    assert "docker.sock" not in ci and "docker.sock" not in cd
+    assert "if: github.ref == 'refs/heads/prod'" in cd
+    assert re.search(r"^FROM python:\S+@sha256:[0-9a-f]{64}", (ROOT / "Dockerfile").read_text(
+        encoding="utf-8"), re.M)
+    assert re.search(r"alpine:\S+@sha256:[0-9a-f]{64}", _read("harden_vps.sh"))
+    assert (ROOT / ".github" / "dependabot.yml").exists()

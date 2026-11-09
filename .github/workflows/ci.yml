@@ -30,9 +30,9 @@ permissions:
   contents: read
 
 env:
-  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1
-  ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12
-  TRIVY_IMAGE: aquasec/trivy:0.76.2
+  GITLEAKS_IMAGE: zricethezav/gitleaks:v8.30.1@sha256:b109bc5f8f76a38196a3e413704fc5b9e3c32360bce4e4b603bd6f45b3721dbb
+  ACTIONLINT_IMAGE: rhysd/actionlint:1.7.12@sha256:9d36088643581e728c969f35141f88139fec77280b2be23c1f66f8e40e1025e7
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:6fa071ef8daa2e58b90cbf1710bedca91adbb3bf98693533226f442035b836a6
   COVERAGE_MIN: "85"            # couverture mesurée : 89 % (novembre 2026)
 
 jobs:
@@ -517,16 +517,18 @@ jobs:
           name: image
       - name: Chargement
         run: gunzip -c image.tar.gz | docker load
+      # sécurité : Trivy lit l'archive de l'image, JAMAIS le socket Docker (droits root)
       - name: Trivy (HIGH/CRITICAL corrigeables)
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY_IMAGE" \
-            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
-            --no-progress tradebot:local
+          docker save tradebot:local -o image.tar
+          docker run --rm -v "$PWD/image.tar:/image.tar:ro" "$TRIVY_IMAGE" \
+            image --input /image.tar --scanners vuln --severity HIGH,CRITICAL \
+            --ignore-unfixed --exit-code 1 --no-progress
       - name: Inventaire des composants (SBOM CycloneDX)
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" \
-            "$TRIVY_IMAGE" image --format cyclonedx --output /out/sbom.cdx.json \
-            --no-progress tradebot:local
+          docker run --rm -v "$PWD/image.tar:/image.tar:ro" -v "$PWD:/out" \
+            "$TRIVY_IMAGE" image --input /image.tar --format cyclonedx \
+            --output /out/sbom.cdx.json --no-progress
       - uses: actions/upload-artifact@v7
         with:
           name: sbom

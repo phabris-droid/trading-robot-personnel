@@ -165,7 +165,7 @@ cat > "$BACKUP_BIN" <<EOF
 set -euo pipefail
 stamp=\$(date -u +%Y-%m-%d)
 if docker volume inspect tradebot-data >/dev/null 2>&1; then
-  archive() { docker run --rm --network none -v tradebot-data:/data:ro alpine:3.20 \\
+  archive() { docker run --rm --network none -v tradebot-data:/data:ro alpine:3.20@sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e \\
                 tar czf - -C /data .; }
 elif [ -d /opt/tradebot/data ]; then
   archive() { tar czf - -C /opt/tradebot/data .; }
