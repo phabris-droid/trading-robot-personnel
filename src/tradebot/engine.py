@@ -43,6 +43,7 @@ from tradebot.strategies import EXITS, REGISTRY
 
 CANDLES = 300
 CANDLE_S = 3600                    # bougies 1 h (CDC §3)
+ACCOUNT_CURRENCY = "USD"           # A10 : devise des calculs de capital et de risque
 
 Alert = Callable[[str, str], None]
 
@@ -194,6 +195,21 @@ class Engine:
                     broker.adopt_journal_row(row)
             self.alert("info", f"{name} connecté ({len(rows)} position(s) reprise(s))",
                        key=f"connect:{name}")
+            self._check_account_currency(name, broker)
+
+    def _check_account_currency(self, name: str, broker) -> None:
+        """A10 : capital, risque et minimums sont calculés en USD (CDC §2). Compte dans une
+        autre devise -> alerte ; en mode réel, marchés de la plateforme mis en pause."""
+        currency = str(getattr(broker, "account_currency", "") or "").upper()
+        if currency in ("", ACCOUNT_CURRENCY):
+            return
+        self.alert("critical", f"{name} : compte en {currency}, pas en {ACCOUNT_CURRENCY} — "
+                               "tailles et risques faussés", key=f"devise:{name}")
+        if self.settings.mode == "live":
+            for m in self.settings.markets:
+                if m.platform == name:
+                    self._pause(m.symbol, f"devise du compte {currency} (attendu "
+                                          f"{ACCOUNT_CURRENCY})")
 
     def _read_equity(self) -> None:
         for name, broker in self.brokers.items():

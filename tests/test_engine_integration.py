@@ -634,3 +634,19 @@ def test_candles_are_not_refetched_before_the_next_candle_closes(tmp_path):
     now["t"] = float(DATA["BTCUSDT"]["close_ts"].iloc[broker.i - 1]) + 60
     eng.cycle()
     assert len(calls) > first
+
+
+@pytest.mark.parametrize("mode", ["demo", "live"])
+def test_capital_account_not_in_usd_alerts_and_pauses_in_live(mode):
+    """A10 : compte Capital.com hors USD -> alerte critique ; en réel, marchés en pause."""
+    class EurBroker:
+        account_currency = "EUR"
+
+    alerts = []
+    settings = SETTINGS.model_copy(update={"mode": mode})
+    eng = Engine(settings, None, connectors={"capital": EurBroker},
+                 alert=lambda lvl, msg: alerts.append((lvl, msg)), clock=lambda: 1e9)
+    eng._connect(int(1e9))
+    assert any(lvl == "critical" and "EUR" in msg for lvl, msg in alerts)
+    capital = {m.symbol for m in SETTINGS.markets if m.platform == "capital"}
+    assert set(eng.paused) == (capital if mode == "live" else set())
