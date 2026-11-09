@@ -911,3 +911,56 @@ def test_r14_emergency_requested_during_a_state_write_survives_restart(tmp_path)
     restarted = Engine(SETTINGS, journal, connectors={}, alert=lambda *_: None,
                        clock=lambda: 1e9)
     assert restarted.control["emergency"] is True
+
+
+# --- décisions A2, A3, A4 (acceptées le 2026-11-06, confirmées le 2026-11-09) -------------------
+
+def test_decision_a2_risk_uses_the_platform_capital_only():
+    """A2 : 1 % du capital de la plateforme qui passe l'ordre, jamais du total."""
+    from types import SimpleNamespace
+
+    eng = Engine(SETTINGS, None, connectors={}, alert=lambda *_: None)
+    market = next(m for m in SETTINGS.markets if m.symbol == "BTCUSDT")
+    sig = SimpleNamespace(side="buy", entry=100.0, stop=95.0, target=120.0)
+    broker = SimpleNamespace(quote=lambda s: (99.95, 100.0), min_qty=lambda s: 0.0)
+    eng.equity = {"binance": 1000.0, "capital": 1000.0}
+    alone, _ = eng._size(market, broker, sig)
+    eng.equity["capital"] = 1_000_000.0                  # l'autre plateforme ne compte pas
+    assert eng._size(market, broker, sig)[0] == pytest.approx(alone)
+    risk = alone * (100.0 - 95.0) / 1000.0 * 100
+    assert risk <= SETTINGS.risk.risk_per_trade_pct + 1e-9
+
+
+def test_decision_a3_binance_safety_stop_never_closes_capital_positions(tmp_path):
+    """A3 : arrêt de sécurité par plateforme : Binance s'arrête, Capital.com continue."""
+    broker, eng, journal, _ = _with_positions(tmp_path, n=1)
+
+    class CapitalStub:
+        closed: list = []
+
+        def close_position(self, pid):
+            self.closed.append(pid)
+
+        def quote(self, symbol):
+            return 1.08, 1.0801
+
+    cap = CapitalStub()
+    eng.brokers["capital"] = cap
+    journal.open_position("D1", "capital", "EURUSD", "buy", 500, 1.08, 1.07, 1.10,
+                          client_id="EURUSD-1")
+    eng.breakers._state("binance").safety_stop = "test A3"
+    eng._safety_close()
+    assert [r["platform"] for r in journal.open_positions()] == ["capital"]
+    assert cap.closed == []
+    assert eng.breakers.can_enter("capital", journal.open_positions(), 0) is None
+
+
+def test_decision_a4_gold_counts_as_forex_and_closes_for_the_weekend():
+    """A4 : l'or compte dans les 2 positions forex et respecte la fermeture du week-end."""
+    from tradebot.risk.breakers import Breakers
+
+    br = Breakers(SETTINGS.risk, clock=lambda: 1e9)
+    rows = [{"platform": "capital", "market": "EURUSD"},
+            {"platform": "capital", "market": "GOLD"}]
+    assert "forex" in br.can_enter("capital", rows, 0)
+    assert br.can_enter("binance", rows, 0) is None
