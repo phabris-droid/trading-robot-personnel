@@ -294,7 +294,7 @@ class CapitalCFD(Broker):
         data = self._request("GET", EP_PRICES.format(epic=symbol),
                              params={"resolution": RESOLUTION_1H,
                                      "max": min(limit + 1, MAX_CANDLES)})
-        return self._to_frame(data.get("prices", []), limit)
+        return self._to_frame(data.get("prices", []), limit, CLOSE_MARGIN_S)
 
     def history(self, symbol: str, start_ts: float, end_ts: float) -> pd.DataFrame:
         """Bougies 1 h clôturées entre deux dates, par paquets de 1000 (validation, étape 9)."""
@@ -312,15 +312,16 @@ class CapitalCFD(Broker):
             t = to
         return self._to_frame(prices, None)
 
-    def _to_frame(self, raw_prices: list[dict], limit: int | None) -> pd.DataFrame:
+    def _to_frame(self, raw_prices: list[dict], limit: int | None,
+                  margin_s: int = 0) -> pd.DataFrame:
         now = self._clock()
         rows = []
         seen: set[int] = set()
         for p in raw_prices:
             ts = _utc_ts(p["snapshotTimeUTC"])
-            # ADV11 : marge d'horloge : une horloge locale un peu en avance ne fait jamais
-            # décider sur une bougie que la plateforme n'a pas encore clôturée
-            if ts + HOUR_S + CLOSE_MARGIN_S > now or ts in seen:   # en cours ou en double
+            # ADV11 : marge d'horloge (décisions du moteur seulement) : une horloge locale un
+            # peu en avance ne fait jamais décider sur une bougie pas encore clôturée
+            if ts + HOUR_S + margin_s > now or ts in seen:   # en cours ou en double
                 continue
             seen.add(ts)
 
