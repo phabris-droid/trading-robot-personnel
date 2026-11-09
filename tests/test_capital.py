@@ -377,3 +377,14 @@ def test_uncertain_order_matches_a_position_whose_size_was_rounded(mock, cap):
     mock.get(host=HOST, path="/api/v1/positions").respond(json={"positions": [
         _position(deal_id="D9", size=500.0000000001, created="2023-11-14T22:13:25")]})
     assert cap.recover_order("EURUSD-1", "EURUSD", 1.07, 1.10, side="buy", qty=587.4) == "D9"
+
+
+def test_real_exit_level_comes_from_the_close_confirmation(mock, cap):
+    """A6 : niveau de clôture confirmé par Capital.com."""
+    _open(mock, cap)
+    mock.delete(host=HOST, path="/api/v1/positions/D1").respond(json={"dealReference": "c_1"})
+    mock.get(host=HOST, path="/api/v1/confirms/c_1").respond(json={
+        "dealStatus": "ACCEPTED", "affectedDeals": [{"dealId": "D1", "status": "DELETED"}],
+        "level": 1.0855})
+    cap.close_position("D1")
+    assert cap.exit_price("D1") == pytest.approx(1.0855)

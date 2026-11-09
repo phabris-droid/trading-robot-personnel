@@ -101,10 +101,22 @@ class BinancePosition:
     oco_seq: int = 0
     exit_seq: int = 0
     status: str = "open"   # open | unprotected | inconsistent | closed
+    exit_price: float = 0.0   # A6 : prix moyen réellement exécuté à la sortie (0 = inconnu)
 
 
 BAN_DEFAULT_S = 300.0             # 418 sans durée indiquée : 5 min sans aucune requête
 BAN_MAX_S = 3 * 24 * 3600.0
+
+
+def _avg_price(order: dict | None) -> float:
+    """A6 : prix moyen d'un ordre exécuté (cummulativeQuoteQty / executedQty), 0 si illisible."""
+    try:
+        qty = float((order or {}).get("executedQty") or 0)
+        quote = float((order or {}).get("cummulativeQuoteQty") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    price = quote / qty if qty > 0 else 0.0
+    return price if math.isfinite(price) and price > 0 else 0.0
 
 
 def _floor(value: Decimal, step: Decimal) -> Decimal:
@@ -475,10 +487,11 @@ class BinanceSpot(Broker):
         except OrderRejected as exc:
             pos.status = "inconsistent"
             raise PositionInconsistent(pos.id, f"vente refusée : {exc}") from None
-        self._apply_exit(pos, Decimal(str(fill.get("executedQty", "0"))))
+        self._apply_exit(pos, Decimal(str(fill.get("executedQty", "0"))), fill)
 
-    def _apply_exit(self, pos: BinancePosition, executed: Decimal) -> None:
+    def _apply_exit(self, pos: BinancePosition, executed: Decimal, fill: dict | None = None) -> None:
         f = self.filters(pos.symbol)
+        pos.exit_price = _avg_price(fill) or pos.exit_price
         remaining = Decimal(str(pos.qty)) - executed
         if remaining < f.min_qty:
             pos.status = "closed"
@@ -576,7 +589,7 @@ class BinanceSpot(Broker):
         # « fermée par la plateforme » UNIQUEMENT si une vente exécutée de l'OCO est vue
         filled = self._filled_leg(oco)
         if filled:
-            self._apply_exit(pos, Decimal(str(filled["executedQty"])))  # partiel -> incohérent
+            self._apply_exit(pos, Decimal(str(filled["executedQty"])), filled)  # partiel -> incohérent
             return "closed_by_platform"
         # aucune exécution vue : le stop est absent -> le reposer, sinon vendre (CDC §6)
         f = self.filters(pos.symbol)
@@ -613,7 +626,7 @@ class BinanceSpot(Broker):
                     raise
             filled = self._oco_fill(pos.oco_id)
             if filled:                                 # stop ou objectif exécuté
-                self._apply_exit(pos, Decimal(str(filled["executedQty"])))
+                self._apply_exit(pos, Decimal(str(filled["executedQty"])), filled)
                 return
         pos.status = "unprotected"
         # l'annulation doit avoir libéré la quantité : plus aucun ordre du robot ouvert
@@ -641,6 +654,11 @@ class BinanceSpot(Broker):
                     "entry": row["entry"], "stop": row["stop"], "target": row["target"],
                     "client_id": row["client_id"], "oco_id": ref, "oco_seq": seq,
                     "status": "open" if ref else "unprotected"})
+
+    def exit_price(self, position_id: str) -> float | None:
+        """A6 : prix de sortie réellement exécuté, None si inconnu."""
+        pos = self._positions.get(position_id)
+        return pos.exit_price if pos and pos.exit_price > 0 else None
 
     def position(self, position_id: str) -> dict | None:
         pos = self._positions.get(position_id)

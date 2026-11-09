@@ -94,6 +94,7 @@ class CapitalPosition:
     oco_id: str = ""           # (sans objet : stop et objectif sont attachés à la position)
     absences: int = 0
     status: str = "open"       # open | unprotected | inconsistent | closed
+    exit_price: float = 0.0    # A6 : niveau de clôture confirmé par Capital.com (0 = inconnu)
 
 
 def _num(value) -> float | None:
@@ -502,6 +503,7 @@ class CapitalCFD(Broker):
         if conf.get(F_DEAL_STATUS) != ACCEPTED:
             pos.status = "inconsistent"
             raise PositionInconsistent(pos.id, f"fermeture refusée ({conf.get('reason')})")
+        pos.exit_price = _num(conf.get("level")) or 0.0
         pos.status = "closed"
 
     def ensure_stop(self, position_id: str) -> StopStatus:
@@ -551,6 +553,11 @@ class CapitalCFD(Broker):
             id=row["id"], symbol=row["market"], side=row["side"], qty=row["qty"],
             entry=row["entry"], stop=row["stop"], target=row["target"],
             client_id=row["client_id"], status="open")
+
+    def exit_price(self, position_id: str) -> float | None:
+        """A6 : prix de sortie réellement exécuté, None si inconnu."""
+        pos = self._positions.get(position_id)
+        return pos.exit_price if pos and pos.exit_price > 0 else None
 
     def position(self, position_id: str) -> dict | None:
         pos = self._positions.get(position_id)

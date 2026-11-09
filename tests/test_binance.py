@@ -620,3 +620,14 @@ def test_stop_above_bid_is_recalculated_before_sending(mock, bn):
     p = _params(oco.calls.last)
     assert p["belowStopPrice"] == "57999.99"      # un cran sous le prix acheteur
     assert p["belowPrice"] == "57709.99"
+
+
+def test_real_exit_price_comes_from_the_sell_fill(mock, bn):
+    """A6 : le P&L utilise le prix moyen réellement exécuté, pas la cotation."""
+    _open(mock, bn)
+    _orders_route(mock, sell=httpx.Response(200, json={
+        **FILL, "side": "SELL", "executedQty": "0.00122", "cummulativeQuoteQty": "73.2"}))
+    _close_routes(mock, btc_free="0.50122")
+    assert bn.exit_price("t1") is None
+    bn.close_position("t1")
+    assert bn.exit_price("t1") == pytest.approx(60000.0)

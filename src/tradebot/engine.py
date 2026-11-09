@@ -275,11 +275,15 @@ class Engine:
         return ex.reason if ex else None
 
     def _record_close(self, row: dict, broker, reason: str) -> None:
-        try:
-            bid, ask = broker.quote(row["market"])
-            exit_price = bid if row["side"] == "buy" else ask
-        except Exception:  # noqa: BLE001
-            exit_price = row["entry"]
+        exit_price = None
+        with suppress(Exception):               # A6 : prix réellement exécuté d'abord
+            exit_price = broker.exit_price(row["id"])
+        if not exit_price:                      # inconnu : cotation actuelle (estimation)
+            try:
+                bid, ask = broker.quote(row["market"])
+                exit_price = bid if row["side"] == "buy" else ask
+            except Exception:  # noqa: BLE001
+                exit_price = row["entry"]
         sign = 1 if row["side"] == "buy" else -1
         fees = (row["entry"] + exit_price) * row["qty"] * self._fee_rate(row["platform"])
         pnl = sign * (exit_price - row["entry"]) * row["qty"] - fees

@@ -585,3 +585,15 @@ def test_control_state_is_safe_across_threads():
         t.join()
     assert errors == []
     assert eng.paused is eng.control["markets"]
+
+
+def test_closed_trade_uses_the_real_exit_price_when_known(tmp_path):
+    """A6 : le prix exécuté donné par la plateforme fait foi pour le P&L."""
+    broker, eng, journal, _ = _with_positions(tmp_path, n=1)
+    row = journal.open_positions()[0]
+    broker.exit_price = lambda pid: row["entry"] + 3.0
+    eng._record_close(row, broker, "test")
+    [trade] = journal.recent_trades(1)
+    assert trade["exit"] == pytest.approx(row["entry"] + 3.0)
+    fees = (2 * row["entry"] + 3.0) * row["qty"] * SETTINGS.costs.binance.fee_pct / 100
+    assert trade["pnl"] == pytest.approx(3.0 * row["qty"] - fees)
