@@ -376,9 +376,15 @@ class Engine:
         if any(r["market"] == symbol for r in rows):
             return "position déjà ouverte sur ce marché"
         trades_today = self._j("count_opened_since", utc_midnight(self._clock()))
-        if trades_today is None:
+        uncertain = self._j("orders", "uncertain")
+        if trades_today is None or uncertain is None:
             return "journal indisponible : nombre de trades du jour inconnu"
-        return self.breakers.can_enter(platform, rows, trades_today)
+        # M9 : un ordre incertain est peut-être une position ouverte : il compte dans les
+        # plafonds (positions, forex, trades du jour) tant qu'il n'est pas résolu
+        rows = rows + [{"platform": o["platform"], "market": o["market"]} for o in uncertain]
+        if any(o["market"] == symbol for o in uncertain):
+            return "ordre incertain en cours sur ce marché"
+        return self.breakers.can_enter(platform, rows, trades_today + len(uncertain))
 
     def _breaker_events(self, platform: str, events: list[str]) -> None:
         for ev in events:
@@ -555,6 +561,12 @@ class Engine:
                 self.alert("error", f"{row['market']} : fermeture d'urgence impossible ({exc})",
                            key=f"urgence:{row['id']}")
         remaining = self._open_rows()
+        uncertain = self._j("orders", "uncertain")
+        if uncertain is None or uncertain:
+            # m1 : un ordre incertain cache peut-être une position : jamais « terminé » avant
+            # qu'il soit résolu (recherché à chaque cycle, voir _resolve_uncertain)
+            pending = [{"market": o["market"]} for o in uncertain or []]
+            remaining = remaining or pending or [{"market": "journal illisible"}]
         if not remaining:
             with self._lock:
                 self.control.update(emergency=False, paused="arrêt d'urgence terminé : "

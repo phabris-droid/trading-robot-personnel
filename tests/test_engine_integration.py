@@ -678,3 +678,28 @@ def test_adv15_a_failing_step_never_blocks_emergency_close_nor_heartbeat(tmp_pat
     assert journal.open_positions() == []
     assert eng.last_cycle_ts is not None
     assert any("étape capital" in m for _, m in alerts)
+
+
+def test_uncertain_orders_count_in_position_limits(tmp_path):
+    """M9 : 3 positions ouvertes + 1 ordre incertain = plafond de 4 atteint."""
+    broker, eng, journal, _ = _with_positions(tmp_path, n=2)
+    journal.open_position("u9", "binance", "BTCUSDT", "buy", 1.0, 100.0, 90.0, 120.0,
+                          client_id="u9")
+    journal.save_order(client_id="c-unc", platform="capital", market="EURUSD", side="buy",
+                       qty=500, status="uncertain", stop=1.07, target=1.10, strategy="x")
+    assert eng._engine_checks("GBPUSD", "capital") is not None
+    assert "incertain" in eng._engine_checks("EURUSD", "capital")
+
+
+def test_emergency_is_not_finished_while_an_order_is_uncertain(tmp_path):
+    """m1 : ordre incertain = position peut-être ouverte : l'arrêt d'urgence continue."""
+    broker, eng, journal, alerts = _with_positions(tmp_path, n=0)
+    journal.save_order(client_id="c-unc", platform="binance", market="BTCUSDT", side="buy",
+                       qty=0.001, status="uncertain", stop=90.0, target=120.0, strategy="x")
+    eng.request_emergency_stop("test")
+    eng._emergency_close()
+    assert eng.control["emergency"] is True
+    journal.save_order(client_id="c-unc", platform="binance", market="BTCUSDT", side="buy",
+                       qty=0.001, status="rejected")
+    eng._emergency_close()
+    assert eng.control["emergency"] is False
