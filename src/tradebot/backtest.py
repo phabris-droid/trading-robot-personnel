@@ -88,6 +88,7 @@ def run_backtest(candles: pd.DataFrame, market, settings, start_equity: float = 
     df = candles.reset_index(drop=True)
     costs = settings.costs.of(market.platform)
     fee, half_spread = costs.fee_pct / 100, costs.spread_pct / 100 / 2
+    slippage = costs.stop_slippage_pct / 100
     financing_per_hour = costs.financing_daily_pct / 100 / HOURS_PER_DAY
     params = settings.strategies.params(market.strategy)
     atr_n = settings.strategies.atr_period
@@ -120,7 +121,10 @@ def run_backtest(candles: pd.DataFrame, market, settings, start_equity: float = 
             pos["financing"] += pos["entry"] * pos["qty"] * financing_per_hour
             buy = pos["side"] == "buy"
             if (buy and bar["low"] <= pos["stop"]) or (not buy and bar["high"] >= pos["stop"]):
-                close(pos["stop"], bar["close_ts"], "stop")
+                # A5 : ouverture au-delà du stop (écart) -> exécuté à l'ouverture ; puis glissement
+                opened = float(bar["open"])
+                fill = min(pos["stop"], opened) if buy else max(pos["stop"], opened)
+                close(fill * (1 - slippage if buy else 1 + slippage), bar["close_ts"], "stop")
                 exited_now = True
             elif (buy and bar["high"] >= pos["target"]) or (not buy and bar["low"] <= pos["target"]):
                 close(pos["target"], bar["close_ts"], "objectif")

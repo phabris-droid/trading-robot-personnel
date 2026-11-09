@@ -135,8 +135,9 @@ engine:
   watchdog_minutes: 5              # alerte si aucun cycle depuis 5 min
 
 costs:                             # frais et spread : taille de position, backtest, P&L estimé
-  binance: {fee_pct: 0.1, spread_pct: 0.01, financing_daily_pct: 0.0}    # spot, taker 0,1 %
-  capital: {fee_pct: 0.0, spread_pct: 0.01, financing_daily_pct: 0.02}   # CFD : spread + nuit
+  # stop_slippage_pct (A5) : glissement prudent d'un stop, backtest seulement (à confirmer J1)
+  binance: {fee_pct: 0.1, spread_pct: 0.01, financing_daily_pct: 0.0, stop_slippage_pct: 0.05}
+  capital: {fee_pct: 0.0, spread_pct: 0.01, financing_daily_pct: 0.02, stop_slippage_pct: 0.02}
 
 validation:                        # scripts/validate_markets.py (CDC §3)
   months: 12

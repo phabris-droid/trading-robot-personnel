@@ -225,6 +225,8 @@ class PlatformCosts(Strict):
     fee_pct: float = Field(ge=0, le=1)                # frais par côté, % de la valeur
     spread_pct: float = Field(ge=0, le=1)             # spread moyen, % du prix (backtest)
     financing_daily_pct: float = Field(ge=0, le=1)    # financement CFD par nuit, % valeur
+    # A5 : glissement d'un stop exécuté au marché (backtest), % du prix, en plus du spread
+    stop_slippage_pct: float = Field(ge=0, le=2)
 
 
 class Costs(Strict):

@@ -281,3 +281,25 @@ def test_backtest_and_reports_share_the_same_statistics():
     assert rep["drawdown"] == round(stats.max_drawdown(pnls)[0], 2) == 3.0
     assert rep["pertes_de_suite_max"] == stats.max_loss_streak(pnls) == 2
     assert stats.profit_factor([]) == 0.0 and _stats([])["profit_factor"] is None
+
+
+def test_stop_exits_include_gap_and_slippage(data, full):
+    """A5 : un stop est exécuté au pire du stop et de l'ouverture (écart), moins un glissement
+    configurable (costs.<plateforme>.stop_slippage_pct)."""
+    b = S.costs.binance
+    no_slip = S.model_copy(update={"costs": S.costs.model_copy(update={
+        "binance": b.model_copy(update={"stop_slippage_pct": 0.0})})})
+    ideal = run_backtest(data, MARKETS["BTCUSDT"], no_slip)
+    first = next(i for i, t in enumerate(full.trades) if t.reason == "stop")
+    assert full.trades[:first] == ideal.trades[:first]      # mêmes trades avant le 1er stop
+    real, perfect = full.trades[first], ideal.trades[first]
+    slip = b.stop_slippage_pct / 100
+    factor = 1 - slip if real.side == "buy" else 1 + slip
+    assert real.exit == pytest.approx(perfect.exit * factor)
+    assert real.pnl < perfect.pnl
+    for t in ideal.trades:                                   # écart : jamais mieux que le stop
+        if t.reason == "stop":
+            row = data[data["close_ts"] == t.exit_ts].iloc[0]
+            half = b.spread_pct / 100 / 2
+            raw = t.exit / (1 - half) if t.side == "buy" else t.exit / (1 + half)
+            assert (raw <= row["open"] + 1e-9) if t.side == "buy" else (raw >= row["open"] - 1e-9)
