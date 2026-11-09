@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from tradebot.backtest import run_backtest
+from tradebot.backtest import run_backtest_real
 from tradebot.interfaces import reports
 
 DAY = 86_400
@@ -73,7 +73,7 @@ def compare_backtest(trades: list[dict], candles_by_market: dict[str, pd.DataFra
         df = candles_by_market.get(market.symbol)
         if df is None or df.empty:
             continue
-        bt = run_backtest(df, market, settings)
+        bt = run_backtest_real(df, market, settings)        # mêmes conditions que le réel
         bt_trades = [t for t in bt.trades if t.entry_ts >= since]
         live = [t for t in trades if t["market"] == market.symbol]
         out[market.symbol] = {

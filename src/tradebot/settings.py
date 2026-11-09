@@ -240,6 +240,19 @@ class ValidationCfg(Strict):
     min_profit_factor: float = Field(ge=0.5, le=5)    # CDC §3 : 1,1
     min_trades: int = Field(ge=1, le=1000)            # CDC §3 : 20
     warmup_candles: int = Field(ge=50, le=1000)
+    # K3 : conditions réelles du compte (CDC §2 : 100 $, forex minimum 500 unités, levier 30)
+    start_equity: float = Field(gt=0, le=1e9)
+    # par marché Capital.com (l'or se compte en onces, le forex en unités) ; à vérifier J1
+    capital_min_qty: dict[str, float] = Field(min_length=1)
+    capital_leverage: dict[str, float] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _positive(self) -> ValidationCfg:
+        for name in ("capital_min_qty", "capital_leverage"):
+            for symbol, v in getattr(self, name).items():
+                if not v > 0:
+                    raise ValueError(f"{name}.{symbol} doit être > 0")
+        return self
 
 
 # --- Moteur, rapports, tableau de bord, stockage --------------------------------------------

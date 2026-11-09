@@ -193,3 +193,15 @@ def load_csv(path: str | Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"{path} : colonnes manquantes {sorted(missing)}")
     return df[COLUMNS]
+
+
+def run_backtest_real(candles: pd.DataFrame, market, settings) -> BtResult:
+    """K3 : backtest dans les conditions RÉELLES du compte (config.yaml, section validation) :
+    capital de départ, taille minimale et levier Capital.com. Un marché qui ne peut pas trader
+    avec 100 $ (taille minimale trop risquée) ressort donc sans trade, donc « A_REVOIR »."""
+    v = settings.validation
+    min_qty = v.capital_min_qty.get(market.symbol, 0.0) if market.platform == "capital" else 0.0
+    leverage = (v.capital_leverage.get(market.symbol, 1.0) if market.platform == "capital"
+                else 1.0)
+    return run_backtest(candles, market, settings, start_equity=v.start_equity,
+                        min_qty=min_qty, leverage=leverage)

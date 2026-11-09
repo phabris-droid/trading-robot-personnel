@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 import pandas as pd
 
-from tradebot.backtest import binance_history, load_csv, run_backtest, save_csv, verdict
+from tradebot.backtest import binance_history, load_csv, run_backtest_real, save_csv, verdict
 from tradebot.settings import ConfigError, load_env, load_settings
 
 HISTORY_DIR = Path("data/history")
@@ -69,7 +69,7 @@ def validate(settings, histories: dict) -> list[dict]:
             rows.append({"marche": market.symbol, "strategie": market.strategy,
                          "verdict": "A_REVOIR", "note": f"données insuffisantes ({note})"})
             continue
-        result = run_backtest(df, market, settings)
+        result = run_backtest_real(df, market, settings)   # conditions réelles (K3)
         pf = result.profit_factor
         rows.append({"marche": market.symbol, "strategie": market.strategy,
                      "verdict": verdict(result, v.min_profit_factor, v.min_trades),

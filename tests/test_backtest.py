@@ -237,3 +237,29 @@ def test_supervisor_writes_report_and_never_modifies_anything(tmp_path, data):
     after = journal._read("SELECT (SELECT COUNT(*) FROM trades) a, (SELECT COUNT(*) FROM "
                           "positions) b, (SELECT COUNT(*) FROM decisions) c")
     assert before == after                              # lecture seule
+
+
+# --- K3 : validation dans les conditions réelles du compte ---------------------------------------
+
+def test_real_conditions_can_forbid_a_market_that_looks_fine_ideally(data):
+    from tradebot.backtest import run_backtest_real
+
+    eur = MARKETS["EURUSD"]
+    ideal = run_backtest(data, eur, S)                      # 1000 $, sans minimum ni levier
+    real = run_backtest_real(data, eur, S)                  # 100 $, 500 unités, levier 30
+    assert ideal.n > 0 and real.n == 0                      # taille minimale hors plafond
+    assert verdict(real, S.validation.min_profit_factor, S.validation.min_trades) == "A_REVOIR"
+    assert real.start_equity == S.validation.start_equity == 100
+
+
+def test_validation_rejects_non_positive_minimum(tmp_path):
+    import yaml
+
+    from tradebot.settings import ConfigError
+
+    raw = yaml.safe_load((ROOT / "config" / "config.yaml").read_text(encoding="utf-8"))
+    raw["validation"]["capital_min_qty"]["GOLD"] = 0
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(ConfigError, match="capital_min_qty.GOLD"):
+        load_settings(p, env={})
