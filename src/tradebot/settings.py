@@ -21,12 +21,33 @@ class ConfigError(Exception):
 class Strict(BaseModel):
     # strict : "10" n'est pas un nombre, "yes" n'est pas un booléen (CDC §4) ;
     # un entier reste accepté là où un décimal est attendu (1 pour 1.0)
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    # allow_inf_nan=False (ADV2) : « .nan » ou « .inf » refusés, sinon les bornes ge/le ne
+    # protègent rien et les disjoncteurs ne se déclencheraient jamais (x >= nan est faux)
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True, allow_inf_nan=False)
 
 
 HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
 WEEKDAY_HHMM = r"^(mon|tue|wed|thu|fri|sat|sun) ([01]\d|2[0-3]):[0-5]\d$"
 HTTPS_URL = r"^https://[A-Za-z0-9.-]+(:\d+)?(/\S*)?$"
+# bougies chargées par le moteur à chaque décision (ADV3 : aucun indicateur plus long)
+CANDLES_FETCHED = 300
+INDICATOR_MARGIN = 20
+DEMO_HOST_MARKERS = ("demo", "testnet")
+
+
+def _host(url: str) -> str:
+    return url.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+
+
+def _check_demo_live(demo: str, live: str, name: str) -> None:
+    """ADV1 : l'URL démo ne doit jamais pointer vers la vraie plateforme."""
+    d, l_ = _host(demo), _host(live)
+    if d == l_:
+        raise ValueError(f"{name} : URL démo identique à l'URL réelle ({d})")
+    if not any(m in d for m in DEMO_HOST_MARKERS):
+        raise ValueError(f"{name} : l'URL démo ({d}) doit être un hôte de démo/testnet")
+    if any(m in l_ for m in DEMO_HOST_MARKERS):
+        raise ValueError(f"{name} : l'URL réelle ({l_}) pointe vers la démo")
 
 
 # --- Marchés --------------------------------------------------------------------------------
@@ -56,12 +77,22 @@ class BinanceCfg(Strict):
     market_data_url: str = Field(pattern=HTTPS_URL)
     stop_limit_offset_pct: float = Field(ge=0.05, le=5)
 
+    @model_validator(mode="after")
+    def _demo_is_demo(self) -> BinanceCfg:
+        _check_demo_live(self.trading_url_demo, self.trading_url_live, "binance")
+        return self
+
 
 class CapitalCfg(Strict):
     enabled: bool
     url_demo: str = Field(pattern=HTTPS_URL)
     url_live: str = Field(pattern=HTTPS_URL)
     keepalive_minutes: int = Field(ge=1, le=9)   # la session Capital.com expire après 10 min
+
+    @model_validator(mode="after")
+    def _demo_is_demo(self) -> CapitalCfg:
+        _check_demo_live(self.url_demo, self.url_live, "capital")
+        return self
 
 
 class Platforms(Strict):
@@ -116,6 +147,25 @@ class Strategies(Strict):
     mean_reversion: MeanReversionCfg
     breakout: BreakoutCfg
     atr_period: int = Field(ge=2, le=100)
+
+    @model_validator(mode="after")
+    def _fits_in_loaded_candles(self) -> Strategies:
+        """ADV3 : un indicateur plus long que les bougies chargées resterait NaN et le marché
+        ne traderait jamais, sans alerte."""
+        limit = CANDLES_FETCHED - INDICATOR_MARGIN
+        periods = {"trend_ema.ema_filter": self.trend_ema.ema_filter,
+                   "trend_ema.ema_slow": self.trend_ema.ema_slow,
+                   "mean_reversion.bb_period": self.mean_reversion.bb_period,
+                   "mean_reversion.rsi_period": self.mean_reversion.rsi_period,
+                   "breakout.lookback": self.breakout.lookback,
+                   "breakout.atr_mean_period": self.breakout.atr_mean_period,
+                   "breakout.exit_lookback": self.breakout.exit_lookback,
+                   "atr_period": self.atr_period}
+        too_long = [f"{k}={v}" for k, v in periods.items() if v > limit]
+        if too_long:
+            raise ValueError(f"période(s) supérieure(s) à {limit} bougies (le moteur en charge "
+                             f"{CANDLES_FETCHED}) : {', '.join(too_long)}")
+        return self
 
     def params(self, name: str) -> dict:
         """Paramètres d'une stratégie sous forme de dictionnaire (lecture seule)."""

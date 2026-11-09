@@ -38,10 +38,10 @@ from tradebot.journal import EVENT_LEVELS, Journal, JournalUnavailable
 from tradebot.logs import log
 from tradebot.risk.breakers import FOREX_PLATFORMS, Breakers, utc_midnight
 from tradebot.risk.sizing import position_size
-from tradebot.settings import Settings
+from tradebot.settings import CANDLES_FETCHED, Settings
 from tradebot.strategies import EXITS, REGISTRY
 
-CANDLES = 300
+CANDLES = CANDLES_FETCHED            # ADV3 : même valeur que la validation de config.yaml
 CANDLE_S = 3600                    # bougies 1 h (CDC §3)
 ACCOUNT_CURRENCY = "USD"           # A10 : devise des calculs de capital et de risque
 

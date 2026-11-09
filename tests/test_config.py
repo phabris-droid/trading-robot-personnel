@@ -86,6 +86,19 @@ BAD = {
     "URL Binance non HTTPS": _set(["platforms", "binance"], "trading_url_live",
                                   "http://api.binance.com"),
     "ping Capital trop rare": _set(["platforms", "capital"], "keepalive_minutes", 15),
+    # tests adverses (ADV1-3)
+    "URL démo Binance = réel": _set(["platforms", "binance"], "trading_url_demo",
+                                    "https://api.binance.com"),
+    "URL démo Capital = réel": _set(["platforms", "capital"], "url_demo",
+                                    "https://api-capital.backend-capital.com"),
+    "URL réelle vers la démo": _set(["platforms", "capital"], "url_live",
+                                    "https://demo-api-capital.backend-capital.com"),
+    "perte max NaN": _set(["risk"], "max_drawdown_pct", float("nan")),
+    "perte du jour NaN": _set(["risk"], "daily_loss_pct", float("nan")),
+    "risque par trade infini": _set(["risk"], "risk_per_trade_pct", float("inf")),
+    "EMA plus longue que les bougies": _set(["strategies", "trend_ema"], "ema_filter", 400),
+    "lookback plus long que les bougies": _set(["strategies", "breakout"], "atr_mean_period",
+                                               450),
     "section inconnue": lambda r: r.update(levier=10),
 }
 
