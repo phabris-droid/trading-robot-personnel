@@ -703,3 +703,13 @@ def test_emergency_is_not_finished_while_an_order_is_uncertain(tmp_path):
                        qty=0.001, status="rejected")
     eng._emergency_close()
     assert eng.control["emergency"] is False
+
+
+def test_replaced_oco_reference_is_journaled(tmp_path):
+    """M2 : l'identifiant de l'OCO reposé est enregistré (repris au redémarrage)."""
+    broker, eng, journal, _ = _with_positions(tmp_path, n=1)
+    real = broker.position
+    broker.ensure_stop = lambda pid: "replaced"
+    broker.position = lambda pid: {**(real(pid) or {}), "oco_id": f"{pid}-o2"}
+    eng._manage_positions()
+    assert journal.position("u0")["protection_ref"] == "u0-o2"

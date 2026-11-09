@@ -276,6 +276,7 @@ class Engine:
                     continue
                 if status == "replaced":
                     self.alert("warning", f"{row['market']} : stop reposé chez la plateforme")
+                    self._save_protection(row, broker)
                 reason = self._exit_reason(row, broker)
                 if reason:
                     broker.close_position(row["id"])
@@ -285,6 +286,14 @@ class Engine:
             except Exception as exc:  # noqa: BLE001
                 self.alert("error", f"{row['market']} : gestion de la position impossible "
                                     f"({type(exc).__name__}: {exc})", key=f"pos:{row['id']}")
+
+    def _save_protection(self, row: dict, broker) -> None:
+        """M2 : nouvel identifiant de l'OCO reposé enregistré dans le journal (sinon, au
+        redémarrage, le robot chercherait l'ancien OCO, déjà annulé)."""
+        pos = broker.position(row["id"]) or {}
+        ref = pos.get("oco_id") or ""
+        if ref and ref != row.get("protection_ref"):
+            self._j("set_protection", row["id"], ref)
 
     def _exit_reason(self, row: dict, broker) -> str | None:
         """Stop logiciel (sur le prix acheteur / vendeur) puis sortie anticipée."""
