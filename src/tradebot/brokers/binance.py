@@ -386,9 +386,18 @@ class BinanceSpot(Broker):
                 continue
             extra = (Decimal(str(free + locked)) - Decimal(str(self.baseline.get(asset, 0.0)))
                      - held.get(asset, Decimal(0)))
-            if extra > 0:
+            if extra > 0 and not self._is_dust(asset, extra):
                 out[asset] = float(extra)
         return out
+
+    def _is_dust(self, asset: str, extra: Decimal) -> bool:
+        """R06 : reste de frais (sous la quantité minimale échangeable du marché) : jamais un
+        « avoir inexpliqué » qui mettrait la plateforme en pause à chaque trade."""
+        for symbol in self.symbols:
+            f = self.filters(symbol)
+            if f.base_asset == asset:
+                return extra < f.min_qty
+        return False
 
     def quote_assets(self) -> set[str]:
         """Devises de cotation (quoteAsset) des marchés configurés et des positions suivies."""

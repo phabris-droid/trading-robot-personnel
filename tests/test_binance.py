@@ -926,3 +926,14 @@ def test_r04_null_executed_qty_on_an_oco_leg_is_a_broker_error(mock, bn):
         bn.close_position("t1")
     with pytest.raises(BrokerError):
         bn.ensure_stop("t1")
+
+
+def test_r06_commission_dust_is_not_an_unexplained_balance(mock, bn):
+    """Testeur adverse R06 : reste de frais sous la quantité minimale : pas de pause."""
+    _open(mock, bn)            # 0,00123 achetés, frais en BTC, OCO sur 0,00122
+    mock.get(host=DEMO, path="/api/v3/account").respond(
+        json=_account(btc_free="0.00000877", btc_locked="0.00122"))
+    assert bn.untracked_balances() == {}
+    mock.get(host=DEMO, path="/api/v3/account").respond(
+        json=_account(btc_free="0.01", btc_locked="0.00122"))
+    assert bn.untracked_balances() == {"BTC": pytest.approx(0.01)}   # vrai avoir inexpliqué
