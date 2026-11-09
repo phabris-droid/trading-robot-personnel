@@ -114,3 +114,16 @@ def test_every_github_action_is_pinned_by_commit_sha():
     assert uses
     assert all(re.search(r"@[0-9a-f]{40}\b", u) for u in uses), \
         [u for u in uses if not re.search(r"@[0-9a-f]{40}\b", u)]
+
+
+def test_deploy_key_is_limited_to_a_forced_command_accepting_only_a_digest():
+    """Audit sécurité n° 5 (décision : commande forcée) : la clé du pipeline n'ouvre aucun
+    shell, l'utilisateur deploy n'a ni Docker ni .env, l'image est exigée par empreinte."""
+    harden = _read("harden_vps.sh")
+    assert 'restrict,command="/usr/local/sbin/tradebot-deploy"' in harden
+    assert "--shell /usr/sbin/nologin" in harden and "visudo -cf" in harden
+    assert "NOPASSWD: /usr/local/sbin/tradebot-deploy-run" in harden
+    assert r"@sha256:[0-9a-f]{64}$" in harden
+    assert 'usermod -aG docker "$DEPLOY_USER"' not in harden
+    cd = (ROOT / ".github" / "workflows" / "cd-prod.yml").read_text(encoding="utf-8")
+    assert '"$U@$H" deploy' in cd and "scp " not in cd and "bash -s" not in cd

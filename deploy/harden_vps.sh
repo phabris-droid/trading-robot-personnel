@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Durcissement du VPS LWS (CDC §8) — Ubuntu 24.04, relançable sans risque (idempotent).
 #
-#   sudo bash harden_vps.sh --ssh-key /chemin/cle.pub [--https]
+#   sudo bash harden_vps.sh --ssh-key /chemin/cle.pub [--https] [--deploy-key deploy.pub]
+#                           [--backup-key cle-gpg.asc] [--backup-remote distant:dossier]
 #   sudo bash harden_vps.sh --confirm-ssh        # dans les 10 min, depuis une NOUVELLE session
 #
 # - utilisateur « trader » (groupe docker), connexion SSH par clé uniquement, root et mot de
@@ -12,10 +13,14 @@
 #   horloge synchronisée (chrony) ;
 # - sauvegarde chiffrée quotidienne du volume Docker « tradebot-data » (bases SQLite, audits),
 #   conservée 14 jours dans /var/backups/tradebot.
+# - S5 : avec --deploy-key, utilisateur « deploy » SANS shell ni Docker : sa clé ne peut
+#   lancer qu'un script qui n'accepte qu'une image par empreinte sha256 (règle sudo unique).
 # Ne pas exécuter sans demande explicite du propriétaire (CLAUDE.md).
 set -euo pipefail
 
 SSH_KEY=""
+DEPLOY_KEY=""
+DEPLOY_USER="deploy"
 HTTPS=0
 CONFIRM=0
 APP_USER="trader"
@@ -34,6 +39,7 @@ die() { printf '[harden] ERREUR : %s\n' "$*" >&2; exit 1; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --ssh-key) SSH_KEY="${2:-}"; shift 2 ;;
+    --deploy-key) DEPLOY_KEY="${2:-}"; shift 2 ;;
     --https) HTTPS=1; shift ;;
     --confirm-ssh) CONFIRM=1; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
@@ -86,6 +92,61 @@ fi
 [ -s "/home/$APP_USER/.ssh/authorized_keys" ] || \
   die "aucune clé SSH pour $APP_USER : relancer avec --ssh-key, sinon accès perdu"
 install -d -m 750 -o "$APP_USER" -g "$APP_USER" /opt/tradebot
+
+# --- S5 : déploiement par commande forcée (la clé du pipeline ne peut RIEN faire d'autre) ----------
+if [ -n "$DEPLOY_KEY" ]; then
+  [ -f "$DEPLOY_KEY" ] || die "clé de déploiement introuvable : $DEPLOY_KEY"
+  [ -f "$(dirname "$0")/deploy_remote.sh" ] || die "deploy_remote.sh introuvable à côté du script"
+  if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
+    adduser --disabled-password --gecos "" --shell /usr/sbin/nologin "$DEPLOY_USER"
+  fi
+  install -m 755 -o root -g root "$(dirname "$0")/deploy_remote.sh" \
+    /usr/local/sbin/tradebot-deploy-remote
+  cat > /usr/local/sbin/tradebot-deploy-run <<'EOF'
+#!/usr/bin/env bash
+# Exécuté sous « trader » par la seule règle sudo de « deploy » (harden_vps.sh, S5) :
+# 3 variables lues sur l'entrée standard, vérifiées une à une, jamais évaluées.
+set -euo pipefail
+TRADEBOT_IMAGE="" GHCR_USER="" GHCR_TOKEN=""
+for _ in 1 2 3; do
+  IFS= read -r line || break
+  case "$line" in
+    TRADEBOT_IMAGE=*) TRADEBOT_IMAGE="${line#TRADEBOT_IMAGE=}" ;;
+    GHCR_USER=*) GHCR_USER="${line#GHCR_USER=}" ;;
+    GHCR_TOKEN=*) GHCR_TOKEN="${line#GHCR_TOKEN=}" ;;
+    *) echo "variable refusée" >&2; exit 1 ;;
+  esac
+done
+[[ "$TRADEBOT_IMAGE" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || \
+  { echo "image refusée : ghcr.io/...@sha256:<empreinte> attendu" >&2; exit 1; }
+[[ "$GHCR_USER" =~ ^[A-Za-z0-9-]{1,39}$ ]] || { echo "utilisateur GHCR refusé" >&2; exit 1; }
+[[ "$GHCR_TOKEN" =~ ^[A-Za-z0-9_]{20,255}$ ]] || { echo "jeton GHCR refusé" >&2; exit 1; }
+export APP_DIR=/opt/tradebot TRADEBOT_IMAGE GHCR_USER GHCR_TOKEN
+exec /usr/local/sbin/tradebot-deploy-remote
+EOF
+  chmod 755 /usr/local/sbin/tradebot-deploy-run
+  cat > /usr/local/sbin/tradebot-deploy <<'EOF'
+#!/usr/bin/env bash
+# Commande forcée de la clé « deploy » (S5) : aucune autre commande n'est possible.
+set -euo pipefail
+case "${SSH_ORIGINAL_COMMAND:-deploy}" in
+  deploy) exec sudo -n -u trader /usr/local/sbin/tradebot-deploy-run ;;
+  *) echo "commande refusée" >&2; exit 1 ;;
+esac
+EOF
+  chmod 755 /usr/local/sbin/tradebot-deploy
+  printf '%s ALL=(%s) NOPASSWD: /usr/local/sbin/tradebot-deploy-run\n' \
+    "$DEPLOY_USER" "$APP_USER" > /etc/sudoers.d/tradebot-deploy.new
+  chmod 440 /etc/sudoers.d/tradebot-deploy.new
+  visudo -cf /etc/sudoers.d/tradebot-deploy.new >/dev/null || die "règle sudo invalide"
+  mv /etc/sudoers.d/tradebot-deploy.new /etc/sudoers.d/tradebot-deploy
+  install -d -m 700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "/home/$DEPLOY_USER/.ssh"
+  printf 'restrict,command="/usr/local/sbin/tradebot-deploy" %s\n' "$(cat "$DEPLOY_KEY")" \
+    > "/home/$DEPLOY_USER/.ssh/authorized_keys"
+  chown "$DEPLOY_USER:$DEPLOY_USER" "/home/$DEPLOY_USER/.ssh/authorized_keys"
+  chmod 600 "/home/$DEPLOY_USER/.ssh/authorized_keys"
+  log "utilisateur $DEPLOY_USER : commande forcée de déploiement uniquement (VPS_USER=$DEPLOY_USER)"
+fi
 
 # --- SSH : clé uniquement, retour automatique après 10 min sans confirmation ----------------------
 desired="$(cat <<'EOF'

@@ -6,10 +6,10 @@
 #
 # Secrets à créer dans Settings → Environments → production :
 #   VPS_HOST         ex. 213.156.135.38
-#   VPS_USER         ex. trader (membre du groupe docker)
+#   VPS_USER         deploy (créé par harden_vps.sh --deploy-key : commande forcée, S5)
 #   VPS_SSH_KEY      clé privée dédiée au déploiement (ed25519)
 #   VPS_KNOWN_HOSTS  sortie de : ssh-keyscan -t ed25519 213.156.135.38
-# Variable facultative : VPS_APP_DIR (défaut /opt/tradebot)
+# Dossier fixe sur le VPS : /opt/tradebot (docker-compose.prod.yml et .env posés par le propriétaire)
 # Tant que ces secrets manquent, l'image est publiée mais le déploiement est sauté
 # (avertissement dans le résumé du pipeline).
 name: CD prod
@@ -123,7 +123,6 @@ jobs:
       contents: read
       packages: read
     env:
-      APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/tradebot' }}
       IMAGE_REF: ${{ needs.publish.outputs.digest }}   # image testée, par empreinte
     steps:
       - name: Secrets du VPS configurés ?
@@ -161,16 +160,10 @@ jobs:
           printf '%s\n' "$K" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$KH" > ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts
 
-      - name: Copier docker-compose.prod.yml
-        if: steps.check.outputs.ok == 'true'
-        env:
-          H: ${{ secrets.VPS_HOST }}
-          U: ${{ secrets.VPS_USER }}
-        run: |
-          OPTS=(-i "$HOME/.ssh/id_deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-          printf 'mkdir -p %q\n' "$APP_DIR" | ssh "${OPTS[@]}" "$U@$H" "bash -s"
-          scp "${OPTS[@]}" docker-compose.prod.yml "$U@$H:$APP_DIR/"
-
+      # S5 : la clé de déploiement n'ouvre AUCUN shell : sur le VPS, une commande forcée
+      # (harden_vps.sh --deploy-key) n'accepte que ces 3 variables et une image par empreinte
+      # sha256. docker-compose.prod.yml est installé sur le VPS par le propriétaire (jamais
+      # envoyé par le pipeline : il décide de la configuration du conteneur).
       - name: Télécharger l'image et relancer le robot (retour arrière si KO)
         if: steps.check.outputs.ok == 'true'
         env:
@@ -180,14 +173,9 @@ jobs:
           GHCR_USER: ${{ github.actor }}
         run: |
           OPTS=(-i "$HOME/.ssh/id_deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-          # Variables et jeton GHCR passés par l'entrée standard (jamais dans une ligne de
-          # commande distante, visible dans la liste des processus du VPS) ; le script est
-          # deploy/deploy_remote.sh, répété à chaque CI (« Répétition du déploiement »)
-          {
-            printf 'APP_DIR=%q\nTRADEBOT_IMAGE=%q\nGHCR_USER=%q\nGHCR_TOKEN=%q\n' \
-              "$APP_DIR" "$IMAGE_REF" "$GHCR_USER" "$GHCR_TOKEN"
-            cat deploy/deploy_remote.sh
-          } | ssh "${OPTS[@]}" "$U@$H" "bash -s"
+          # jeton GHCR sur l'entrée standard, jamais dans une ligne de commande
+          printf 'TRADEBOT_IMAGE=%s\nGHCR_USER=%s\nGHCR_TOKEN=%s\n' \
+            "$IMAGE_REF" "$GHCR_USER" "$GHCR_TOKEN" | ssh "${OPTS[@]}" "$U@$H" deploy
 
       - name: Nettoyer la clé
         if: always()

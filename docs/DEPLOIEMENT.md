@@ -30,11 +30,11 @@ Secrets de l'environnement (**Add environment secret**) :
 | Secret | Contenu | Comment l'obtenir |
 |---|---|---|
 | `VPS_HOST` | `213.156.135.38` | CDC §8 |
-| `VPS_USER` | `trader` | utilisateur créé par `harden_vps.sh` (étape 10), membre du groupe `docker` |
-| `VPS_SSH_KEY` | clé privée **dédiée** au déploiement | `ssh-keygen -t ed25519 -f deploy_tradebot -C "github-actions"` ; ajouter `deploy_tradebot.pub` à `~trader/.ssh/authorized_keys` sur le VPS |
+| `VPS_USER` | `deploy` | créé par `harden_vps.sh --deploy-key deploy_tradebot.pub` : sans shell ni Docker, sa clé ne lance qu'une commande forcée (S5) |
+| `VPS_SSH_KEY` | clé privée **dédiée** au déploiement | `ssh-keygen -t ed25519 -f deploy_tradebot -C "github-actions"` ; passer `deploy_tradebot.pub` à `harden_vps.sh --deploy-key` (jamais dans `~trader/.ssh`) |
 | `VPS_KNOWN_HOSTS` | empreinte du serveur | `ssh-keyscan -t ed25519 213.156.135.38` (vérifier l'empreinte avec celle affichée par le VPS) |
 
-Variable facultative (**Add environment variable**) : `VPS_APP_DIR` (défaut `/opt/tradebot`).
+Dossier fixe sur le VPS : `/opt/tradebot`.
 
 ## 4. Protection des branches
 
@@ -58,7 +58,8 @@ Le VPS s'authentifie à chaque déploiement avec le jeton temporaire du pipeline
 2. `mkdir -p /opt/tradebot && chmod 700 /opt/tradebot`
 3. Créer `/opt/tradebot/.env` à partir de `.env.example`, puis `chmod 600 .env`.
    **Jamais** de `.env` dans le dépôt ni dans les secrets GitHub.
-4. Rien d'autre : le pipeline copie `docker-compose.prod.yml` et télécharge l'image.
+4. Copier `docker-compose.prod.yml` du dépôt dans `/opt/tradebot/` (à refaire seulement s'il
+   change) : le pipeline ne l'envoie plus, il ne transmet que l'empreinte de l'image (S5).
 
 ## 7. Mettre en ligne
 

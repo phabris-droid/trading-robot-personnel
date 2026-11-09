@@ -121,13 +121,12 @@ uv pip compile pyproject.toml --extra dev --python-version 3.12 --python-platfor
 
 ### Configuration à faire une fois
 1. **GitHub → Settings → Environments → `production`** : ajouter les secrets `VPS_HOST`,
-   `VPS_USER`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS` (variable facultative `VPS_APP_DIR`, défaut
-   `/opt/tradebot`). Tant qu'ils manquent, l'image est publiée mais le déploiement est sauté.
+   `VPS_USER` (= `deploy`), `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`. Tant qu'ils manquent, l'image est publiée mais le déploiement est sauté.
    Conseillé : cocher *Required reviewers* pour valider chaque mise en ligne d'un clic.
 2. **GitHub → Settings → General → Default branch** : choisir `dev` (puisque `main` reste vide).
-3. **Sur le VPS** : installer Docker, ajouter l'utilisateur au groupe `docker`, créer
-   `/opt/tradebot/.env` (`chmod 600`). Pas besoin de cloner le dépôt : le pipeline copie
-   `docker-compose.prod.yml` et télécharge l'image.
+3. **Sur le VPS** : installer Docker, lancer `harden_vps.sh --deploy-key deploy.pub` (clé du
+   pipeline limitée à une commande forcée), poser `/opt/tradebot/.env` (`chmod 600`) et
+   `/opt/tradebot/docker-compose.prod.yml`. Le pipeline n'envoie que l'empreinte de l'image.
 
 ## Erreurs connues (de la plus grave à la moins grave)
 
