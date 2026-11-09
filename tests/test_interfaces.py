@@ -286,7 +286,15 @@ def test_actions_refused_from_another_origin(client, engine):
 def test_page_has_no_external_resource(client):
     html = client.get("/", auth=GOOD).text
     assert "http://" not in html.replace("http://127", "") and "https://" not in html
-    assert "setInterval(charger, 10000)" in html and "ARRÊT D'URGENCE" in html
+    assert "setTimeout(boucle, delaiMs)" in html and "ARRÊT D'URGENCE" in html
+    assert "setInterval(charger, 10000)" not in html             # K6 : plus de délai codé en dur
+
+
+def test_refresh_delay_comes_from_config(client, engine):
+    """K6 : la page se rafraîchit selon dashboard.refresh_seconds (config.yaml)."""
+    s = client.get("/api/state", auth=GOOD).json()
+    assert s["rafraichissement_s"] == engine.settings.dashboard.refresh_seconds
+    assert "s.rafraichissement_s" in client.get("/", auth=GOOD).text
 
 
 

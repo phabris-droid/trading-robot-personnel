@@ -89,6 +89,7 @@ async function charger() {
     const r = await fetch("/api/state", {credentials: "same-origin", cache: "no-store"});
     if (!r.ok) throw new Error("HTTP " + r.status);
     const s = await r.json();
+    if (Number.isFinite(s.rafraichissement_s) && s.rafraichissement_s >= 2) delaiMs = s.rafraichissement_s * 1000;
     const live = s.mode === "live";
     $("mode").textContent = live ? "RÉEL" : "DÉMO";
     $("mode").className = "badge " + (live ? "live" : "demo");
@@ -128,8 +129,13 @@ $("reprendre").onclick = () => confirm("Reprendre les nouvelles entrées ?") && 
 $("urgence").onclick = () => confirm("ARRÊT D'URGENCE : fermer TOUTES les positions ?") &&
   confirm("Confirmer une seconde fois l'arrêt d'urgence ?") && action("/api/urgence", {confirmer: true});
 
-charger();
-setInterval(charger, 10000);
+// K6 : délai de rafraîchissement lu dans config.yaml (dashboard.refresh_seconds) via /api/state
+let delaiMs = 10000;
+async function boucle() {
+  await charger();
+  setTimeout(boucle, delaiMs);
+}
+boucle();
 </script>
 </body>
 </html>

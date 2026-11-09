@@ -180,6 +180,7 @@ def state(_user: str = Depends(require_auth)) -> dict:
         "pnl": pnl_summary(journal, now),
         "evenements": journal.events(50) if journal else [],
         "marches_en_pause": e.paused,
+        "rafraichissement_s": e.settings.dashboard.refresh_seconds,   # K6 : config.yaml
     }
 
 
