@@ -350,3 +350,17 @@ def test_retry_after_parsing_is_shared_by_both_platforms():
     assert capital.parse_retry_after is base.parse_retry_after
     assert binance.parse_retry_after is base.parse_retry_after
     assert "brokers.binance" not in Path(capital.__file__).read_text(encoding="utf-8")
+
+
+def test_size_is_rounded_down_to_the_platform_increment(mock, cap):
+    """A2 : taille arrondie vers le bas au pas minSizeIncrement avant l'envoi."""
+    market = json.loads(json.dumps(MARKET))
+    market["dealingRules"]["minSizeIncrement"] = {"unit": "POINTS", "value": 100}
+    mock.get(host=HOST, path="/api/v1/markets/EURUSD").respond(json=market)
+    post = mock.post(host=HOST, path="/api/v1/positions").respond(json={"dealReference": "o_1"})
+    _confirm(mock)
+    cap.open_position("EURUSD", "buy", 587.4, 1.07, 1.10, "EURUSD-1")
+    assert json.loads(post.calls.last.request.content)["size"] == 500
+    with pytest.raises(OrderRejected):                  # 99 -> 0 : rien n'est envoyé
+        cap.open_position("EURUSD", "buy", 99, 1.07, 1.10, "EURUSD-2")
+    assert post.call_count == 1

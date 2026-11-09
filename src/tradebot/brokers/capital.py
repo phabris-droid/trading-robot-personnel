@@ -37,6 +37,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from decimal import ROUND_FLOOR, Decimal
 
 import httpx
 import pandas as pd
@@ -258,6 +259,20 @@ class CapitalCFD(Broker):
         rules = self.market(symbol).get("dealingRules", {})
         return _num(rules.get("minDealSize", {}).get("value")) or 0.0
 
+    def size_step(self, symbol: str) -> float:
+        """Pas de taille (dealingRules.minSizeIncrement) ; 0 si inconnu."""
+        rules = self.market(symbol).get("dealingRules", {})
+        return _num((rules.get("minSizeIncrement") or {}).get("value")) or 0.0
+
+    def round_size(self, symbol: str, qty: float) -> float:
+        """A2 : taille arrondie VERS LE BAS au pas de la plateforme (jamais plus de risque)."""
+        step = self.size_step(symbol)
+        if step <= 0:
+            return qty
+        d_step = Decimal(str(step))
+        return float((Decimal(str(qty)) / d_step).to_integral_value(rounding=ROUND_FLOOR)
+                     * d_step)
+
     def leverage(self, symbol: str) -> float:
         """Levier = 100 / marge exigée (%) ; sert au plafond de 25 % calculé sur la marge."""
         inst = self.market(symbol).get("instrument", {})
@@ -365,7 +380,8 @@ class CapitalCFD(Broker):
            (side == "sell" and not target < bid <= ask < stop):
             raise ValueError(f"stop et objectif du mauvais côté du prix ({stop} / {bid}-{ask} "
                              f"/ {target})")
-        if qty < self.min_qty(symbol):
+        qty = self.round_size(symbol, qty)
+        if qty <= 0 or qty < self.min_qty(symbol):
             raise OrderRejected(f"{symbol} : taille {qty} sous le minimum {self.min_qty(symbol)}")
         self._check_stop_distance(symbol, price, stop)
         self._pending[client_id] = {"symbol": symbol, "side": side, "qty": qty, "stop": stop,
