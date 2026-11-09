@@ -104,3 +104,13 @@ def test_tool_and_base_images_are_pinned_and_trivy_never_gets_the_docker_socket(
         encoding="utf-8"), re.M)
     assert re.search(r"alpine:\S+@sha256:[0-9a-f]{64}", _read("harden_vps.sh"))
     assert (ROOT / ".github" / "dependabot.yml").exists()
+
+
+def test_every_github_action_is_pinned_by_commit_sha():
+    """Audit sécurité n° 4 : une étiquette (v4) peut être déplacée ; un SHA complet non."""
+    files = list((ROOT / ".github").rglob("*.yml"))
+    uses = [line.strip() for f in files for line in f.read_text(encoding="utf-8").splitlines()
+            if re.match(r"\s*(-\s*)?uses:\s*[a-z]", line)]
+    assert uses
+    assert all(re.search(r"@[0-9a-f]{40}\b", u) for u in uses), \
+        [u for u in uses if not re.search(r"@[0-9a-f]{40}\b", u)]
