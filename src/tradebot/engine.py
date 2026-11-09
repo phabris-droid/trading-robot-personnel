@@ -143,13 +143,17 @@ class Engine:
             if not self.journal.flush():
                 self.alert("critical", "journal indisponible : positions gérées en mémoire",
                            key="journal")
-        self._connect(now)
-        self._read_equity()
-        self._resolve_uncertain(now)
-        self._manage_positions()
-        self._safety_close()
-        self._emergency_close()
-        self._refresh_news()
+        if not self._control_loaded:
+            self._step("contrôle", self._reload_control)
+        # ADV15 : chaque étape est isolée ; une erreur (état illisible…) n'empêche jamais
+        # l'arrêt d'urgence ni le battement de cœur
+        self._step("connexion", lambda: self._connect(now))
+        self._step("capital", self._read_equity)
+        self._step("ordres incertains", lambda: self._resolve_uncertain(now))
+        self._step("positions", self._manage_positions)
+        self._step("arrêt de sécurité", self._safety_close)
+        self._step("arrêt d'urgence", self._emergency_close)
+        self._step("veille", self._refresh_news)
         banned = {name for name in self.brokers if self._banned(name, now)}
         for market in self.settings.markets:
             if not market.enabled or market.platform not in self.brokers:
@@ -162,8 +166,14 @@ class Engine:
                 self.alert("error", f"{market.symbol} : {type(exc).__name__}: {exc}",
                            key=f"market:{market.symbol}")
         if self.cycles % self.settings.engine.reconcile_every_cycles == 0:
-            self._reconcile()
+            self._step("réconciliation", self._reconcile)
         self.last_cycle_ts = now                   # battement de cœur
+
+    def _step(self, name: str, fn) -> None:
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001
+            self.alert("error", f"étape {name} : {type(exc).__name__}: {exc}", key=f"step:{name}")
 
     def _banned(self, name: str, now: int) -> bool:
         until = getattr(self.brokers.get(name), "banned_until", 0) or 0
@@ -331,8 +341,8 @@ class Engine:
             return                                  # première bougie observée : mémorisée
         if symbol in self.paused or symbol in self.blocked or self.journal is None:
             return
-        if self.control["emergency"] or self.control["paused"]:
-            return                                  # pause globale ou arrêt d'urgence
+        if self.control["emergency"] or self.control["paused"] or not self._control_loaded:
+            return                                  # pause globale, arrêt d'urgence, état inconnu
         params = self.settings.strategies.params(market.strategy)
         sig = REGISTRY[market.strategy](df, params, list(market.sides),
                                         self.settings.strategies.atr_period)
@@ -382,6 +392,10 @@ class Engine:
                 self.alert("critical", f"{platform} : ARRÊT DE SÉCURITÉ — "
                                        f"{self.breakers.safety_stopped(platform)} ; fermeture de "
                                        "toutes les positions, redémarrage manuel nécessaire")
+            elif ev == "etat_inconnu":
+                self.alert("critical", f"{platform} : état des disjoncteurs illisible (journal) "
+                                       "— entrées refusées jusqu'au retour du journal",
+                           key=f"breakers_unknown:{platform}")
             elif ev == "lecture_a_confirmer":
                 self.alert("warning", f"{platform} : variation du capital > "
                                       f"{self.settings.risk.equity_drop_confirm_pct:g} % à "
@@ -450,7 +464,15 @@ class Engine:
     # --- arrêt d'urgence, pause et reprise (commandes du propriétaire, étape 8) --------------
 
     def _load_control(self) -> dict[str, Any]:
-        saved = self._j("get_state", "engine")
+        """M3 / ADV14 : journal illisible au démarrage -> état « non chargé » : entrées
+        refusées et relecture à chaque cycle (un arrêt d'urgence enregistré n'est pas oublié)."""
+        saved = None
+        self._control_loaded = True
+        if self.journal is not None:
+            try:
+                saved = self.journal.get_state("engine")
+            except JournalUnavailable:
+                self._control_loaded = False
         base: dict[str, Any] = {"emergency": False, "attempts": 0, "paused": "", "markets": {}}
         if saved:
             with suppress(ValueError):          # état illisible : valeurs par défaut
@@ -458,6 +480,22 @@ class Engine:
         if not isinstance(base["markets"], dict):
             base["markets"] = {}
         return base
+
+    def _reload_control(self) -> None:
+        loaded = self._load_control()
+        if not self._control_loaded:
+            return
+        with self._lock:
+            # fusion prudente : un arrêt d'urgence ou une pause demandés entre-temps restent
+            if self.control["emergency"]:
+                loaded.update(emergency=True, attempts=self.control["attempts"])
+            loaded["paused"] = self.control["paused"] or loaded["paused"]
+            loaded["markets"].update(self.paused)
+            self.control.clear()
+            self.control.update(loaded)
+            self.paused = self.control["markets"]
+            self._save_control()
+        self.alert("info", "état du moteur relu dans le journal")
 
     def _save_control(self) -> None:
         with self._lock:                        # A4 : jamais sérialisé pendant une écriture
@@ -588,7 +626,7 @@ class Engine:
             return "arrêt de sécurité"
         if self.control["emergency"]:
             return "arrêt d'urgence"
-        if self.control["paused"] or self.paused:
+        if self.control["paused"] or self.paused or not self._control_loaded:
             return "en pause"
         return "actif"
 

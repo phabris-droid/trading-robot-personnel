@@ -54,20 +54,37 @@ class Breakers:
         self.journal = journal
         self._clock = clock
         self.states: dict[str, PlatformState] = {}
+        self.unknown: set[str] = set()      # M3 : état illisible (journal en panne) -> prudence
+        self._corrupt_events: set[str] = set()
 
     # --- persistance --------------------------------------------------------------------------
 
     def _state(self, platform: str) -> PlatformState:
-        if platform not in self.states:
-            saved = None
-            if self.journal is not None:
-                try:
-                    saved = self.journal.get_state(f"breakers:{platform}")
-                except JournalUnavailable:
-                    saved = None
-            self.states[platform] = PlatformState(**json.loads(saved)) if saved else \
-                PlatformState()
-        return self.states[platform]
+        """État de la plateforme. M3 / ADV13 : journal illisible -> état INCONNU, jamais mis
+        en cache ni sauvegardé (sinon il écraserait l'arrêt de sécurité enregistré) ; relu au
+        prochain appel. ADV15 : état enregistré corrompu -> arrêt de sécurité par prudence."""
+        if platform in self.states:
+            return self.states[platform]
+        saved = None
+        if self.journal is not None:
+            try:
+                saved = self.journal.get_state(f"breakers:{platform}")
+            except JournalUnavailable:
+                self.unknown.add(platform)
+                return PlatformState()
+        self.unknown.discard(platform)
+        state = PlatformState()
+        if saved:
+            try:
+                state = PlatformState(**json.loads(saved))
+            except (TypeError, ValueError):
+                state = PlatformState(safety_stop="état des disjoncteurs illisible dans le "
+                                                  "journal : vérification manuelle")
+                self._corrupt_events.add(platform)
+        self.states[platform] = state
+        if platform in self._corrupt_events:
+            self._save(platform)
+        return state
 
     def _save(self, platform: str) -> None:
         if self.journal is not None:
@@ -82,17 +99,25 @@ class Breakers:
         """Prend en compte une lecture du capital. Renvoie les événements déclenchés :
         « pause_jour », « arret_securite », « reprise_jour », « lecture_a_confirmer »."""
         s = self._state(platform)
+        if platform in self.unknown:
+            return ["etat_inconnu"]              # rien n'est évalué ni sauvegardé
         now = self._clock()
         today = utc_day(now)
         events: list[str] = []
+        if platform in self._corrupt_events:
+            self._corrupt_events.discard(platform)
+            events.append("arret_securite")
         if not equity > 0:
-            return ["lecture_a_confirmer"]
+            return events + ["lecture_a_confirmer"]
         # variation > 10 % sur un cycle : confirmée au cycle suivant avant d'être retenue
         if s.last > 0 and abs(equity - s.last) / s.last * 100 > self.risk.equity_drop_confirm_pct:
-            if s.pending is None or abs(equity - s.pending) / s.pending * 100 > 1:
+            # M5 / ADV12 : confirmée si la lecture en attente allait dans le MÊME sens (un krach
+            # régulier ne peut pas se cacher derrière des remises en attente successives)
+            same_way = s.pending is not None and (s.pending - s.last) * (equity - s.last) > 0
+            if not same_way:
                 s.pending = equity
                 self._save(platform)
-                return ["lecture_a_confirmer"]
+                return events + ["lecture_a_confirmer"]
         s.pending = None
         s.last = equity
         if s.day != today:                       # nouveau jour UTC
@@ -119,6 +144,8 @@ class Breakers:
     def can_enter(self, platform: str, open_rows: list[dict], trades_today: int) -> str | None:
         """Raison du refus d'une nouvelle entrée, ou None si elle est permise."""
         s = self._state(platform)
+        if platform in self.unknown:
+            return "état des disjoncteurs inconnu (journal illisible) : entrées refusées"
         if s.safety_stop:
             return f"arrêt de sécurité ({s.safety_stop}) : redémarrage manuel nécessaire"
         if s.paused_day == utc_day(self._clock()):
@@ -140,6 +167,8 @@ class Breakers:
         """Redémarrage MANUEL après un arrêt de sécurité (commande du propriétaire, étape 8).
         Le plus haut repart du capital actuel."""
         s = self._state(platform)
+        if platform in self.unknown:
+            raise JournalUnavailable("état des disjoncteurs illisible", 0)
         s.safety_stop = ""
         s.peak = s.last
         self._save(platform)

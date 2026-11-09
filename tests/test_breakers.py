@@ -131,3 +131,61 @@ def test_trades_counted_from_utc_midnight(tmp_path):
     t["now"] = T0
     journal.open_position("b", "binance", "ETHUSDT", "buy", 1, 100, 98, 104, client_id="b")
     assert journal.count_opened_since(utc_midnight(T0)) == 1
+
+
+# --- tests adverses (rapport du testeur n° 12, 13, 15 ; audit M3, M5) ---------------------------
+
+class BrokenJournal(Journal):
+    """Base illisible à la demande (disque débranché, erreur d'E/S)."""
+    broken = False
+
+    def _ensure_connection(self):
+        from tradebot.journal import JournalUnavailable
+
+        if self.broken:
+            raise JournalUnavailable("disk I/O error", len(self._pending))
+        return super()._ensure_connection()
+
+
+def test_adv12_steady_crash_cannot_hide_behind_equity_confirmation():
+    br = Breakers(RISK, clock=lambda: T0)
+    assert br.update_equity("binance", 100.0) == []
+    events: list[str] = []
+    for eq in (89, 87, 85, 83, 81, 79, 77, 75, 73, 71, 69):   # krach régulier : -31 %
+        events += br.update_equity("binance", float(eq))
+    assert "arret_securite" in events and br.safety_stopped("binance")
+
+
+def test_isolated_aberrant_reading_is_still_ignored():
+    br = Breakers(RISK, clock=lambda: T0)
+    br.update_equity("binance", 100.0)
+    assert br.update_equity("binance", 10.0) == ["lecture_a_confirmer"]
+    assert br.update_equity("binance", 100.0) == []
+    assert not br.safety_stopped("binance")
+
+
+def test_adv13_unreadable_journal_at_restart_never_erases_safety_stop(tmp_path):
+    j = BrokenJournal(tmp_path / "data" / "tradebot_demo.db", "demo")
+    br = Breakers(RISK, j, clock=lambda: T0)
+    br.update_equity("capital", 100.0)
+    br.update_equity("capital", 92.0)
+    assert "arret_securite" in br.update_equity("capital", 85.0)   # -15 %
+    j.broken = True                              # redémarrage, base illisible
+    br2 = Breakers(RISK, j, clock=lambda: T0 + 60)
+    assert br2.update_equity("capital", 85.0) == ["etat_inconnu"]
+    entry = br2.can_enter("capital", [], 0)
+    j.broken = False                             # la base revient : rejeu des écritures
+    j.flush()
+    br3 = Breakers(RISK, j, clock=lambda: T0 + 120)
+    assert br3.safety_stopped("capital"), "arrêt de sécurité effacé du journal"
+    assert entry is not None, "entrée permise alors que l'état des disjoncteurs est inconnu"
+    assert br2.safety_stopped("capital")         # relu dès que le journal revient
+
+
+def test_adv15_corrupt_breaker_state_is_a_prudent_safety_stop(tmp_path):
+    j = Journal(tmp_path / "data" / "tradebot_demo.db", "demo")
+    j.set_state("breakers:binance", '{"day": "2026-11-09", "peak": 1')   # JSON tronqué
+    br = Breakers(RISK, j, clock=lambda: T0)
+    assert br.safety_stopped("binance")
+    assert br.can_enter("binance", [], 0) is not None
+    assert "arret_securite" in br.update_equity("binance", 100.0)        # alerte une fois

@@ -650,3 +650,29 @@ def test_capital_account_not_in_usd_alerts_and_pauses_in_live(mode):
     assert any(lvl == "critical" and "EUR" in msg for lvl, msg in alerts)
     capital = {m.symbol for m in SETTINGS.markets if m.platform == "capital"}
     assert set(eng.paused) == (capital if mode == "live" else set())
+
+
+def test_adv14_unreadable_journal_at_restart_never_forgets_emergency_stop(tmp_path):
+    """M3 / ADV14 : contrôle illisible au démarrage -> entrées refusées, relu au retour."""
+    from test_breakers import BrokenJournal
+
+    j = BrokenJournal(tmp_path / "data" / "tradebot_demo.db", "demo")
+    Engine(SETTINGS, j, connectors={}, alert=lambda *_: None,
+           clock=lambda: 1e9).request_emergency_stop("test")
+    j.broken = True                              # redémarrage pendant la panne
+    engine = Engine(SETTINGS, j, connectors={}, alert=lambda *_: None, clock=lambda: 1e9 + 60)
+    assert engine.status() == "en pause"         # état inconnu : prudence
+    j.broken = False
+    engine.cycle()
+    assert engine.control["emergency"] is True
+    assert engine.status() == "arrêt d'urgence"
+
+
+def test_adv15_a_failing_step_never_blocks_emergency_close_nor_heartbeat(tmp_path):
+    broker, eng, journal, alerts = _with_positions(tmp_path, n=1)
+    eng._read_equity = lambda: (_ for _ in ()).throw(ValueError("état illisible"))
+    eng.request_emergency_stop("test")
+    eng.cycle()
+    assert journal.open_positions() == []
+    assert eng.last_cycle_ts is not None
+    assert any("étape capital" in m for _, m in alerts)
