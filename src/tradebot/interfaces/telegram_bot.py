@@ -51,9 +51,12 @@ class Commands:
         self._clock = clock
         self._urgence_requested_at: float | None = None
 
-    def handle(self, chat_id: str | int, text: str) -> list[str]:
-        """Réponses à envoyer. Toute commande d'un autre chat est ignorée (aucune réponse)."""
+    def handle(self, chat_id: str | int, text: str, user_id: str | int | None = None) -> list[str]:
+        """Réponses à envoyer. Toute commande d'un autre chat, ou d'un autre utilisateur
+        que le propriétaire (S12 : groupe, transfert), est ignorée (aucune réponse)."""
         if not self.owner or str(chat_id) != self.owner:
+            return []
+        if user_id is not None and str(user_id) != self.owner:
             return []
         cmd = (text or "").strip().split()[0].split("@")[0].lower() if text.strip() else ""
         e = self.engine
@@ -148,7 +151,8 @@ class TelegramService:
         from telegram.ext import Application, MessageHandler, filters
 
         app = Application.builder().token(self._token).build()
-        app.add_handler(MessageHandler(filters.Chat(chat_id=int(self.owner)) & filters.TEXT,
+        app.add_handler(MessageHandler(filters.Chat(chat_id=int(self.owner))
+                                       & filters.User(user_id=int(self.owner)) & filters.TEXT,
                                        self._on_message))
         await app.initialize()
         await app.start()
@@ -160,8 +164,11 @@ class TelegramService:
     async def _on_message(self, update, context) -> None:
         if self.commands is None or update.effective_message is None:
             return
+        if update.effective_user is None:          # S12 : auteur inconnu -> ignoré
+            return
         replies = await asyncio.to_thread(self.commands.handle, update.effective_chat.id,
-                                          update.effective_message.text or "")
+                                          update.effective_message.text or "",
+                                          update.effective_user.id)
         for reply in replies:
             await context.bot.send_message(chat_id=update.effective_chat.id, text=reply)
 

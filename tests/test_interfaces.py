@@ -332,3 +332,11 @@ def test_engine_default_alert_is_the_single_json_logger(capsys):
     data = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
     assert data == {"event": "journal indisponible", "level": "critical",
                     "timestamp": data["timestamp"]}
+
+
+def test_command_from_another_user_in_the_owner_chat_is_ignored(engine):
+    """Sécurité n° 12 : le chat ET l'auteur doivent être le propriétaire."""
+    cmd = Commands(engine, OWNER)
+    assert cmd.handle(OWNER, "/urgence", user_id="424242") == []
+    assert engine.control["emergency"] is False
+    assert cmd.handle(OWNER, "/statut", user_id=OWNER)[0].startswith("Mode DEMO")

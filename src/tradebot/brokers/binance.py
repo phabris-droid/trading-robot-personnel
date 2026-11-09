@@ -481,7 +481,7 @@ class BinanceSpot(Broker):
     def _legs_state(self, lst: dict | None) -> tuple[dict | None, dict | None]:
         """(jambe encore ouverte d'un OCO terminé, jambe exécutée) — une seule lecture par
         jambe, arrêt dès qu'une jambe parle."""
-        active = bool(lst) and lst.get("listOrderStatus") in OCO_ACTIVE
+        active = lst is not None and lst.get("listOrderStatus") in OCO_ACTIVE
         for leg in (lst or {}).get("orders", []):
             od = self._request("GET", self.trading_url, EP_ORDER,
                                {"symbol": leg["symbol"], "orderId": leg["orderId"]}, signed=True)
