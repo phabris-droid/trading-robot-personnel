@@ -788,3 +788,49 @@ def test_audit1_partial_exit_is_counted_once_and_the_rest_is_protected(mock, bn)
     [pos] = bn.positions()
     assert pos["qty"] == pytest.approx(0.00072)
     assert _params(oco.calls.last)["quantity"] == "0.00072"
+
+
+def test_audit4_uncertain_exit_sell_survives_a_restart(mock, bn, tmp_path):
+    """Audit trading n° 4 : vente de sortie expirée puis redémarrage : la vente est recherchée,
+    jamais renvoyée (ni avec le même identifiant, ni sur les avoirs personnels)."""
+    from tradebot.journal import Journal
+
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.5"))
+    bn.ensure_baseline(journal)
+    _open(mock, bn)
+    journal.open_position("t1", "binance", "BTCUSDT", "buy", 0.00122, 60001.0, 59000.0,
+                          61000.0, client_id="t1")
+    orders = _orders_route(mock, sell=httpx.ReadTimeout("délai"))
+    _close_routes(mock, btc_free="0.50122")
+    with pytest.raises(OrderUncertain):
+        bn.close_position("t1")
+    restarted = BinanceSpot("cle", SECRET, f"https://{DEMO}", f"https://{LIVE}", 0.5,
+                            client=httpx.Client(), sleep=lambda s: None, clock=lambda: NOW,
+                            symbols=["BTCUSDT"])
+    restarted.ensure_baseline(journal)
+    restarted.adopt_journal_row(journal.open_positions()[0])
+    found = mock.get(host=DEMO, path="/api/v3/order").respond(json={
+        "orderId": 9, "clientOrderId": "t1-x1", "status": "FILLED", "executedQty": "0.00122",
+        "cummulativeQuoteQty": "73.2"})
+    sells = len([c for c in orders.calls if c.request.url.params["side"] == "SELL"])
+    restarted.close_position("t1")
+    assert _params(found.calls.last)["origClientOrderId"] == "t1-x1"
+    assert len([c for c in orders.calls if c.request.url.params["side"] == "SELL"]) == sells
+    assert restarted.positions() == []
+
+
+def test_audit5_oco_is_never_replaced_before_the_uncertain_exit_is_found(mock, bn):
+    """Audit trading n° 5 : la vente incertaine a été exécutée ; aucun OCO reposé sur les
+    avoirs personnels."""
+    _open(mock, bn)
+    _orders_route(mock, sell=httpx.ReadTimeout("délai"))
+    _close_routes(mock, btc_free="0.50122")
+    with pytest.raises(OrderUncertain):
+        bn.close_position("t1")
+    mock.get(host=DEMO, path="/api/v3/order").respond(json={
+        "orderId": 9, "clientOrderId": "t1-x1", "status": "FILLED", "executedQty": "0.00122"})
+    oco = mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(json={})
+    calls = oco.call_count
+    assert bn.ensure_stop("t1") == "closed_by_platform"
+    assert oco.call_count == calls and bn.positions() == []

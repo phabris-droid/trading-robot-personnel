@@ -26,9 +26,11 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import math
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from urllib.parse import urlencode
@@ -182,6 +184,7 @@ class BinanceSpot(Broker):
         self._positions: dict[str, BinancePosition] = {}
         self._not_found: dict[str, int] = {}     # ordres incertains introuvables (M7)
         self.baseline: dict[str, float] = dict(baseline or {})
+        self._journal = None              # T4 : état des ventes de sortie (ensure_baseline)
 
     def __repr__(self) -> str:   # jamais de secret dans les journaux
         return f"BinanceSpot(trading_url={self.trading_url!r})"
@@ -340,6 +343,7 @@ class BinanceSpot(Broker):
     def ensure_baseline(self, journal) -> dict[str, float]:
         """Avoirs de départ : relus depuis le journal, ou relevés et enregistrés une seule
         fois au premier démarrage. Jamais recalculés après un redémarrage (CDC §6)."""
+        self._journal = journal
         saved = journal.baseline()
         if saved is None:
             saved = self.snapshot_baseline()
@@ -548,10 +552,12 @@ class BinanceSpot(Broker):
                                                f"({f.min_qty}) pour une position de {pos.qty}")
         pos.exit_seq += 1
         cid = f"{pos.client_id}-x{pos.exit_seq}"
+        self._save_exit_state(pos)               # T4 : numéro réservé AVANT l'envoi
         try:
             fill = self._market(pos.symbol, "sell", qty, cid)
         except OrderUncertain:
             pos.exit_uncertain, pos.exit_not_found = cid, 0   # cherchée avant tout renvoi
+            self._save_exit_state(pos)
             raise
         except OrderRejected as exc:
             pos.status = "inconsistent"
@@ -559,8 +565,19 @@ class BinanceSpot(Broker):
         executed = _dec(fill.get("executedQty"))
         if executed is None:                     # réponse illisible : vente peut-être faite
             pos.exit_uncertain, pos.exit_not_found = cid, 0
+            self._save_exit_state(pos)
             raise OrderUncertain(cid, "réponse de vente sans quantité exécutée lisible")
         self._apply_exit(pos, executed, fill)
+
+    def _save_exit_state(self, pos: BinancePosition) -> None:
+        """T4 : vente de sortie incertaine et dernier numéro de vente gardés dans le journal :
+        après un redémarrage, la vente est RECHERCHÉE (jamais renvoyée sur les avoirs
+        personnels) et aucun identifiant client n'est réutilisé."""
+        if self._journal is None:
+            return
+        with suppress(Exception):            # journal en panne : écriture rejouée plus tard
+            self._journal.set_state(f"binance_exit:{pos.id}", json.dumps(
+                {"exit_uncertain": pos.exit_uncertain, "exit_seq": pos.exit_seq}))
 
     def _resolve_uncertain_exit(self, pos: BinancePosition) -> bool:
         """C2 : vente de sortie incertaine recherchée AVANT toute nouvelle vente (sinon une
@@ -574,11 +591,13 @@ class BinanceSpot(Broker):
             if pos.exit_not_found < NOT_FOUND_TO_GIVE_UP:
                 raise OrderUncertain(cid, "vente de sortie introuvable, nouvelle recherche")
             pos.exit_uncertain = ""
+            self._save_exit_state(pos)
             return False
         executed = _dec(od.get("executedQty"))
         if executed is None or (executed <= 0 and od.get("status") not in ORDER_FINAL_STATUSES):
             raise OrderUncertain(cid, f"vente de sortie au statut {od.get('status')}")
         pos.exit_uncertain = ""
+        self._save_exit_state(pos)
         if executed <= 0:
             return False
         self._apply_exit(pos, executed, od)          # partielle -> PositionInconsistent
@@ -714,6 +733,10 @@ class BinanceSpot(Broker):
         if filled and self._consume_exit(pos, _dec(filled.get("executedQty")) or Decimal(0),
                                          filled):
             return "closed_by_platform"
+        # T5 : une vente de sortie incertaine est cherchée AVANT de reposer un OCO (sinon le
+        # nouvel OCO porterait sur les avoirs personnels si cette vente a été exécutée)
+        if pos.exit_uncertain and self._resolve_uncertain_exit(pos):
+            return "closed_by_platform"
         # sortie partielle (T1) : le reste n'est plus protégé -> OCO reposé ci-dessous
         # aucune exécution vue : le stop est absent -> le reposer, sinon vendre (CDC §6)
         f = self.filters(pos.symbol)
@@ -778,6 +801,12 @@ class BinanceSpot(Broker):
                     "entry": row["entry"], "stop": row["stop"], "target": row["target"],
                     "client_id": row["client_id"], "oco_id": ref, "oco_seq": seq,
                     "status": "open" if ref else "unprotected"})
+        if self._journal is not None:           # T4 : vente de sortie incertaine reprise
+            with suppress(Exception):
+                saved = json.loads(self._journal.get_state(f"binance_exit:{row['id']}") or "{}")
+                pos = self._positions[row["id"]]
+                pos.exit_uncertain = str(saved.get("exit_uncertain") or "")
+                pos.exit_seq = int(saved.get("exit_seq") or 0)
 
     def exit_price(self, position_id: str) -> float | None:
         """A6 : prix de sortie réellement exécuté, None si inconnu."""
