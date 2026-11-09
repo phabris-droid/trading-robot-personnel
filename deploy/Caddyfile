@@ -2,5 +2,13 @@
 # Le domaine vient de la variable d'environnement TRADEBOT_DOMAIN (ex. tradebot.mondomaine.fr),
 # jamais écrit en dur. Le tableau de bord reste protégé par son propre mot de passe.
 {$TRADEBOT_DOMAIN} {
+    # S13 : le navigateur n'utilise plus jamais HTTP pour ce domaine ; aucune information sur
+    # le serveur dans les réponses
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+    # S13 : /health sert au contrôle de santé LOCAL (Docker, pipeline) : jamais exposé sur Internet
+    respond /health 404
     reverse_proxy 127.0.0.1:8080
 }

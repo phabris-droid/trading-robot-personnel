@@ -137,3 +137,10 @@ def test_backups_use_the_owner_public_key_and_an_off_site_copy():
     assert "rclone copy" in harden and "logger -p user.err" in harden
     audit = _read("audit_vps.sh")
     assert "clé publique du propriétaire" in audit and "copie externe" in audit
+
+
+def test_caddy_forces_https_and_hides_health():
+    """Audit sécurité n° 13 : HSTS, /health non exposé sur Internet."""
+    caddy = _read("Caddyfile")
+    assert "Strict-Transport-Security" in caddy and "respond /health 404" in caddy
+    assert "reverse_proxy 127.0.0.1:8080" in caddy
