@@ -32,6 +32,7 @@ from contextlib import suppress
 from typing import Any
 
 from tradebot.brokers.base import PositionInconsistent
+from tradebot.analysts.base import AdvisorContext, run_chain
 from tradebot.execution.orders import open_trade, record_position, resolve_uncertain
 from tradebot.execution.reconciliation import reconcile
 from tradebot.journal import EVENT_LEVELS, Journal, JournalUnavailable
@@ -53,9 +54,12 @@ def _stderr_alert(level: str, message: str) -> None:
 class Engine:
     def __init__(self, settings: Settings, journal: Journal | None = None,
                  connectors: dict[str, Callable[[], Any]] | None = None,
-                 alert: Alert | None = None, clock: Callable[[], float] = time.time):
+                 alert: Alert | None = None, clock: Callable[[], float] = time.time,
+                 analysts: list | None = None, news=None):
         self.settings = settings
         self.journal = journal
+        self.analysts = list(analysts or [])     # équipe d'analyse (CDC §5), dans l'ordre
+        self.news = news                         # veille : flux RSS + calendrier (NewsCache)
         self.connectors = connectors or {}       # plateforme -> fonction de connexion
         self.brokers: dict[str, Any] = {}        # interface Broker (duck typing)
         self._alert_out = alert or _stderr_alert
@@ -140,6 +144,7 @@ class Engine:
         self._manage_positions()
         self._safety_close()
         self._emergency_close()
+        self._refresh_news()
         banned = {name for name in self.brokers if self._banned(name, now)}
         for market in self.settings.markets:
             if not market.enabled or market.platform not in self.brokers:
@@ -306,6 +311,8 @@ class Engine:
         if refusal:
             self._j("save_decision", symbol, last_ts, "moteur", True, refusal)
             return
+        if self._advisors_block(market, sig, df, last_ts):
+            return
         qty, why = self._size(market, broker, sig)
         if qty <= 0:
             self._j("save_decision", symbol, last_ts, "taille", True, why)
@@ -464,3 +471,41 @@ class Engine:
                                    f"ouverte(s) après {self.control['attempts']} tentatives "
                                    f"({', '.join(r['market'] for r in remaining)})")
         self._save_control()
+
+    # --- équipe d'analyse (CDC §5) ------------------------------------------------------------
+
+    def _refresh_news(self) -> None:
+        if self.news is None:
+            return
+        try:
+            self.news.refresh(background=True)
+        except Exception as exc:  # noqa: BLE001
+            self.alert("warning", f"veille indisponible : {exc}", key="veille")
+            return
+        for source, err in self.news.errors.items():
+            self.alert("warning", f"veille : source {source} indisponible ({err}), les autres "
+                                  "contrôles s'appliquent", key=f"veille:{source}")
+
+    def _advisors_block(self, market, sig, df, candle_ts: int) -> bool:
+        """Chaîne « 1 refus suffit » ; chaque décision est enregistrée avec sa raison."""
+        if not self.analysts:
+            return False
+        now = self._clock()
+        history = self._j("equity_history", market.platform, int(now) - 86_400) or []
+        ctx = AdvisorContext(
+            symbol=market.symbol, platform=market.platform, strategy=market.strategy,
+            side=sig.side, entry=sig.entry, stop=sig.stop, target=sig.target, now=now,
+            candles=df, equity=self.equity.get(market.platform, 0.0),
+            equity_24h=[e["value"] for e in history], open_rows=self._open_rows(),
+            trades=self._j("recent_trades", 50) or [],
+            risk_pct=self.settings.risk.risk_per_trade_pct)
+        verdicts = run_chain(self.analysts, ctx, live=self.settings.mode == "live")
+        for v in verdicts:
+            self._j("save_decision", market.symbol, candle_ts, v.advisor, v.blocked,
+                    v.reason or ("refus" if v.blocked else ""))
+        last = verdicts[-1] if verdicts else None
+        if last is not None and last.blocked:
+            self.alert("info", f"{market.symbol} : entrée bloquée par {last.advisor} — "
+                               f"{last.reason}")
+            return True
+        return False

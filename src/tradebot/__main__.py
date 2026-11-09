@@ -67,7 +67,11 @@ def main() -> int:
     from tradebot.engine import Engine
     from tradebot.interfaces.dashboard import configure_health
 
-    engine = Engine(settings, journal, connectors=_connectors(settings, journal, env))
+    from tradebot.analysts import build_analysts
+
+    analysts, news = build_analysts(settings, env)   # IA désactivée sans ANTHROPIC_API_KEY
+    engine = Engine(settings, journal, connectors=_connectors(settings, journal, env),
+                    analysts=analysts, news=news)
     # /health = moteur vivant : dernier cycle de moins de N min (chien de garde, CDC §8)
     configure_health(lambda: engine.last_cycle_ts,
                      settings.engine.watchdog_minutes * 60 + 2 * settings.cycle_seconds)

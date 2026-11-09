@@ -221,6 +221,9 @@ jobs:
           - domaine: interface & sécurité
             id: interface
             fichiers: tests/test_dashboard.py
+          - domaine: équipe d'analyse
+            id: analystes
+            fichiers: tests/test_analysts.py
           - domaine: propriétés (hypothesis)
             id: proprietes
             fichiers: tests/test_properties.py

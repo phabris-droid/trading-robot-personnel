@@ -146,6 +146,9 @@ capital de la plateforme ; A3 disjoncteurs par plateforme ; A4 l'or compte comme
 10 trades/jour = ouvertures, jour UTC. Restent ouvertes : A5, A6, A9, A11 (étape 7), A10 (jour 1).
 
 **Étape 3 — faite** (client Capital.com). **Étape 4 — faite** (taille de position, disjoncteurs).
+**Étape 5 — faite** (arrêt d'urgence, réconciliation). **Étape 6 — faite** (intégration à deux
+plateformes). **Étape 7 — faite** (équipe d'analyse ; A5 crypto / dollar, A6 4 h, A9 flux JSON
+public, A11 par plateforme).
 
 ## 6. Git
 

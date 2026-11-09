@@ -154,6 +154,10 @@ class NewsWatchCfg(Strict):
     feed_max_bytes: int = Field(ge=1024, le=2 * 1024 * 1024)   # CDC §8 : 2 Mo maximum
     feed_timeout_s: float = Field(gt=0, le=20)                  # CDC §8 : 20 s maximum
     feeds: list[str] = Field(min_length=1, max_length=30)
+    calendar_url: str = Field(pattern=HTTPS_URL)            # A9 : flux JSON public
+    refresh_minutes: int = Field(ge=1, le=1440)
+    announcement_impacts: list[Literal["High", "Medium", "Low"]] = Field(min_length=1)
+    high_impact_keywords: list[str] = Field(min_length=1, max_length=200)
 
     @field_validator("feeds")
     @classmethod
@@ -169,6 +173,9 @@ class FinancialCfg(Strict):
     volatility_percentile_max: float = Field(ge=50, le=100)
     min_reward_risk: float = Field(ge=0.5, le=10)
     min_reward_risk_mean_reversion: float = Field(ge=0.5, le=10)
+    trend_timeframe_hours: int = Field(ge=2, le=24)          # A6 : tendance de fond en 4 h
+    trend_ema: int = Field(ge=5, le=400)
+    resistance_lookback: int = Field(ge=5, le=500)
 
 
 class RiskAnalystCfg(Strict):
@@ -182,6 +189,17 @@ class RiskAnalystCfg(Strict):
     max_equity_drop_24h_pct: float = Field(ge=0.5, le=50)
     forex_weekend_start_utc: str = Field(pattern=WEEKDAY_HHMM)
     forex_weekend_end_utc: str = Field(pattern=WEEKDAY_HHMM)
+    # A5 : positions liées = même groupe (au plus max_correlated_positions par groupe)
+    correlation_groups: dict[str, list[str]] = Field(min_length=1)
+
+    @field_validator("correlation_groups")
+    @classmethod
+    def _symbols(cls, v: dict[str, list[str]]) -> dict[str, list[str]]:
+        for group, symbols in v.items():
+            for s in symbols:
+                if not re.match(r"^[A-Z0-9]{3,20}$", s):
+                    raise ValueError(f"groupe {group} : symbole invalide {s}")
+        return v
 
 
 class AiCfg(Strict):

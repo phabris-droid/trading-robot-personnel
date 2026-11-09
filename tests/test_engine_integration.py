@@ -453,3 +453,30 @@ def test_two_platforms_500_candles_with_failures_and_one_down_at_start(tmp_path)
     forex_open = [p for p in journal.open_positions() if p["platform"] == "capital"]
     assert len(forex_open) <= SETTINGS.risk.max_forex_positions
     assert len(journal.open_positions()) <= SETTINGS.risk.max_open_positions
+
+
+# --- étape 7 : l'équipe d'analyse peut bloquer une entrée ---------------------------------------
+
+def test_blocking_advisor_prevents_entries_and_decision_is_journaled(tmp_path):
+    from tradebot.analysts.base import Advisor, Verdict
+
+    class AlwaysBlock(Advisor):
+        name = "veille"
+
+        def review(self, ctx):
+            return Verdict(self.name, True, "annonce majeure simulée")
+
+    broker = FakeBroker(DATA)
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    alerts = []
+    eng = Engine(SETTINGS, journal, connectors={"binance": lambda: broker},
+                 alert=lambda lvl, msg: alerts.append(msg),
+                 clock=lambda: broker.data["BTCUSDT"]["close_ts"].iloc[broker.i - 1],
+                 analysts=[AlwaysBlock()])
+    for _ in range(300):
+        eng.cycle()
+        broker.i += 1
+    assert broker.open_calls == []
+    blocked = journal._read("SELECT * FROM decisions WHERE advisor='veille'")
+    assert blocked and all(d["blocked"] == 1 for d in blocked)
+    assert any("bloquée par veille" in m for m in alerts)

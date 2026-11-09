@@ -74,11 +74,35 @@ analysts:
       - https://www.federalreserve.gov/feeds/press_all.xml
       - https://www.ecb.europa.eu/rss/press.html
       - https://www.fxstreet.com/rss/news
+    calendar_url: https://nfs.faireconomy.media/ff_calendar_thisweek.json   # A9 (non officiel)
+    refresh_minutes: 15            # flux et calendrier relus au plus toutes les 15 min
+    announcement_impacts: [High]   # annonces « majeures » du calendrier
+    high_impact_keywords:          # titre contenant l'un de ces mots = actualité à fort impact
+      - hack
+      - exploit
+      - bankrupt
+      - insolvency
+      - delist
+      - halt
+      - emergency
+      - rate decision
+      - rate hike
+      - rate cut
+      - intervention
+      - sanctions
+      - war
+      - default
+      - SEC charges
+      - ETF rejected
+      - crash
   financial:
     resistance_atr: 0.5
     volatility_percentile_max: 97
     min_reward_risk: 1.2
     min_reward_risk_mean_reversion: 1.0
+    trend_timeframe_hours: 4       # A6 : tendance de fond en 4 h (bougies 1 h agrégées)
+    trend_ema: 50
+    resistance_lookback: 50        # résistance / support = extrême des 50 dernières bougies
   risk:
     max_open_risk_pct: 5.0
     max_correlated_positions: 2
@@ -89,7 +113,10 @@ analysts:
     min_equity: 50
     max_equity_drop_24h_pct: 5.0
     forex_weekend_start_utc: "fri 20:00"   # forex fermé du vendredi 20 h…
-    forex_weekend_end_utc: "sun 22:15"     # …au dimanche 22 h 15 UTC
+    forex_weekend_end_utc: "sun 22:15"     # …au dimanche 22 h 15 UTC (or compris, A4)
+    correlation_groups:            # A5 : au plus 2 positions ouvertes par groupe
+      crypto: [BTCUSDT, ETHUSDT, SOLUSDT]
+      dollar: [EURUSD, GBPUSD, GOLD]
   ai:
     enabled: true
     model: claude-haiku-5-5

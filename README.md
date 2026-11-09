@@ -144,7 +144,6 @@ réglages manuels du déploiement : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md).
 | # | Fichier | Erreur | Correction prévue |
 |---|---|---|---|
 | M3 | CD `prod` | Pipeline de mise en ligne jamais exécuté ; environnement `production`, secrets du VPS et droits admin absents. Workflow vérifié : il saute proprement le déploiement sans secrets. | Manuelle : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md) |
-| M6 | `engine.py` | Les disjoncteurs sont branchés (étape 4), mais le moteur ouvre encore des positions (démo, avec clés) **sans l'équipe d'analyse** (veille, analyste financier, analyste des risques, IA). Le mode réel reste bloqué par `CONFIRM_LIVE_TRADING`. | Étape 7 ; ne pas passer en réel avant |
 | M7 | `execution/orders.py` | Un ordre incertain introuvable chez Binance au cycle suivant est déclaré « jamais exécuté ». Si la plateforme le publie plus tard, la position ne serait pas suivie (la réconciliation détecterait l'avoir inexpliqué et mettrait en pause). | Étape 5 : n'abandonner qu'après plusieurs cycles |
 
 ### 🟡 Moyennes
@@ -169,5 +168,6 @@ réglages manuels du déploiement : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md).
 Tranchées : A1 (marge Capital.com / valeur Binance), A2 (risque sur le capital de la plateforme),
 A3 (disjoncteurs par plateforme), A4 (l'or compte comme du forex : maximum 2 et week-end),
 A7 (vente du retour à la moyenne : RSI < 45 ou retour sous la moyenne), A8 (10 trades/jour =
-ouvertures, jour UTC). Restent ouvertes : A5, A6, A9, A11 (étape 7) et A10 (devise du compte
+ouvertures, jour UTC). A5 (groupes liés crypto / dollar), A6 (tendance de fond en 4 h), A9 (calendrier : flux JSON
+public), A11 (risque ouvert par plateforme). Reste ouverte : A10 (devise du compte
 Capital.com, à vérifier le jour 1 de la démo).
