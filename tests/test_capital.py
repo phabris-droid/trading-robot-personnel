@@ -242,16 +242,20 @@ def test_missing_stop_that_cannot_be_added_closes_the_position(mock, cap):
     assert delete.call_count == 1
 
 
-def test_closed_only_after_two_consecutive_absences(mock, cap):
+def test_closed_only_after_two_consecutive_absences(mock, cap, clock):
     _open(mock, cap)
     route = mock.get(host=HOST, path="/api/v1/positions")
     route.respond(json={"positions": []})
     assert cap.ensure_stop("D1") == "absent_once"
+    clock["now"] += 60
     route.respond(json={"positions": [_position()]})          # réapparaît : compteur remis à 0
     assert cap.ensure_stop("D1") == "ok"
     route.respond(json={"positions": []})
+    clock["now"] += 60
     assert cap.ensure_stop("D1") == "absent_once"
+    assert cap.ensure_stop("D1") == "absent_once"          # T11 : même cycle, pas compté
     assert cap.positions() != []
+    clock["now"] += 60
     assert cap.ensure_stop("D1") == "closed_by_platform"
     assert cap.positions() == []
 
@@ -322,7 +326,7 @@ def test_close_deletes_the_position_and_confirms(mock, cap):
     assert delete.call_count == 1 and cap.positions() == []
 
 
-def test_close_of_an_already_vanished_position_waits_for_second_absence(mock, cap):
+def test_close_of_an_already_vanished_position_waits_for_second_absence(mock, cap, clock):
     _open(mock, cap)
     mock.delete(host=HOST, path="/api/v1/positions/D1").respond(404, json={
         "errorCode": "error.not-found.dealId"})
@@ -330,6 +334,7 @@ def test_close_of_an_already_vanished_position_waits_for_second_absence(mock, ca
     with pytest.raises(BrokerUnavailable, match="confirmer"):
         cap.close_position("D1")
     assert cap.positions() != []                    # une seule absence : pas encore fermée
+    clock["now"] += 60                              # cycle suivant
     cap.close_position("D1")                        # 2e absence constatée
     assert cap.positions() == []
 
@@ -467,7 +472,7 @@ def test_deal_reference_survives_a_restart(mock, cap, clock, tmp_path):
     assert report.opened == ["D1"] and conf.call_count == 4
 
 
-def test_position_reappearing_after_being_declared_closed_pauses_the_market(mock, cap):
+def test_position_reappearing_after_being_declared_closed_pauses_the_market(mock, cap, clock):
     """M8 : jamais ignorée en silence."""
     from tradebot.execution.reconciliation import reconcile
 
@@ -475,6 +480,7 @@ def test_position_reappearing_after_being_declared_closed_pauses_the_market(mock
     route = mock.get(host=HOST, path="/api/v1/positions")
     route.respond(json={"positions": []})
     cap.ensure_stop("D1")
+    clock["now"] += 60
     assert cap.ensure_stop("D1") == "closed_by_platform"
     route.respond(json={"positions": [_position()]})           # de retour chez Capital.com
     assert [p["deal_id"] for p in cap.reappeared_positions()] == ["D1"]
@@ -534,3 +540,16 @@ def test_r10_forming_candle_is_excluded_with_server_time_even_5_min_ahead(mock, 
     df = cap.candles("EURUSD", limit=10)
     assert int(df["close_ts"].iloc[-1]) == h0 - 3600
     assert cap.server_now() == pytest.approx(server, abs=1)
+
+
+def test_audit11_two_absences_in_the_same_cycle_never_close_a_position(mock, cap):
+    """Audit trading n° 11 : gestion de la position puis fermeture d'urgence dans le même
+    cycle : une seule absence comptée, la position n'est pas déclarée fermée."""
+    _open(mock, cap)
+    mock.get(host=HOST, path="/api/v1/positions").respond(json={"positions": []})
+    mock.delete(host=HOST, path="/api/v1/positions/D1").respond(404, json={
+        "errorCode": "error.not-found.dealId"})
+    assert cap.ensure_stop("D1") == "absent_once"
+    with pytest.raises(BrokerUnavailable):
+        cap.close_position("D1")                    # même cycle : pas de 2e absence
+    assert cap.positions() != []

@@ -79,6 +79,7 @@ RESOLUTION_1H = "HOUR"
 MAX_CANDLES = 1000
 HOUR_S = 3600
 ABSENCES_TO_CLOSE = 2          # CDC §6 : fermée seulement après 2 absences consécutives
+ABSENCE_MIN_GAP_S = 5         # T11 : 2 absences séparées d'au moins 5 s (2 cycles)
 CLOSE_MARGIN_S = 120          # ADV11 : bougie close seulement 2 min après son heure de fin
 UNCERTAIN_MATCH_WINDOW_S = 120  # une position ouverte jusqu'à 2 min avant l'envoi peut être la nôtre
 
@@ -96,6 +97,7 @@ class CapitalPosition:
     deal_reference: str = ""
     oco_id: str = ""           # (sans objet : stop et objectif sont attachés à la position)
     absences: int = 0
+    last_absence_ts: float = 0.0   # T11 : une absence comptée au plus une fois par cycle
     status: str = "open"       # open | unprotected | inconsistent | closed
     exit_price: float = 0.0    # A6 : niveau de clôture confirmé par Capital.com (0 = inconnu)
 
@@ -562,7 +564,11 @@ class CapitalCFD(Broker):
             return "closed_by_platform"
         live = next((p for p in self._open_on_platform() if p["deal_id"] == position_id), None)
         if live is None:
+            now = self._clock()
+            if now - pos.last_absence_ts < ABSENCE_MIN_GAP_S:
+                return "absent_once"             # T11 : même cycle, déjà comptée
             pos.absences += 1
+            pos.last_absence_ts = now
             if pos.absences >= ABSENCES_TO_CLOSE:          # 2 absences consécutives
                 pos.status = "closed"
                 return "closed_by_platform"
