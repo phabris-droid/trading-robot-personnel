@@ -401,3 +401,55 @@ def test_reconciliation_records_a_position_lost_by_the_journal(tmp_path):
     eng._reconcile()
     assert [p["id"] for p in journal.open_positions()] == ["perdu"]
     assert any("rattrapée" in m for _, m in alerts)
+
+
+# --- étape 6 : deux plateformes simulées, 500 bougies, pannes injectées ------------------------
+
+DATA_CFD = {"EURUSD": _market_data(4), "GBPUSD": _market_data(5), "GOLD": _market_data(6)}
+
+
+def test_two_platforms_500_candles_with_failures_and_one_down_at_start(tmp_path):
+    """Binance et Capital.com simulés, pannes aléatoires sur les deux et sur le journal ;
+    Capital.com est en panne au démarrage : Binance continue, Capital.com est reconnecté
+    plus tard ; aucune position sans stop plus d'un cycle, une décision par bougie."""
+    bn = FakeBroker(DATA, fault_rate=0.1, seed=11)
+    cfd = FakeBroker(DATA_CFD, fault_rate=0.1, seed=12)
+    journal = FlakyJournal(tmp_path / "tradebot_demo.db", "demo")
+    journal.rate = 0.05
+    attempts = []
+
+    def connect_cfd():
+        attempts.append(bn.i)
+        if len(attempts) <= 3:                       # en panne pendant les premiers essais
+            raise BrokerUnavailable("Capital.com injoignable")
+        return cfd
+
+    eng = Engine(SETTINGS, journal, connectors={"binance": lambda: bn, "capital": connect_cfd},
+                 alert=lambda *_: None,
+                 clock=lambda: bn.data["BTCUSDT"]["close_ts"].iloc[bn.i - 1])
+    streak: dict[str, int] = {}
+    binance_before_capital = None
+    for _ in range(500):
+        bn.lose_stops(0.2)
+        cfd.lose_stops(0.2)
+        eng.cycle()
+        if "capital" in eng.brokers and binance_before_capital is None:
+            binance_before_capital = len(bn.open_calls)
+        for p in bn.positions() + cfd.positions():
+            streak[p["id"]] = 0 if p["protected"] else streak.get(p["id"], 0) + 1
+            assert streak[p["id"]] <= 1, f"{p['id']} sans stop > 1 cycle"
+        bn.i += 1
+        cfd.i += 1
+
+    assert len(attempts) >= 4 and "capital" in eng.brokers   # reconnecté après la panne
+    assert binance_before_capital is not None
+    assert bn.open_calls and cfd.open_calls                   # les deux plateformes tradent
+    for calls in (bn.open_calls, cfd.open_calls):
+        assert len(calls) == len(set(calls)), "deux ordres pour une même bougie"
+    journal.rate = 0.0
+    assert journal.flush()
+    opened = {p["id"] for p in journal.open_positions()}
+    assert opened <= set(bn.pos) | set(cfd.pos)               # aucune position fantôme
+    forex_open = [p for p in journal.open_positions() if p["platform"] == "capital"]
+    assert len(forex_open) <= SETTINGS.risk.max_forex_positions
+    assert len(journal.open_positions()) <= SETTINGS.risk.max_open_positions
