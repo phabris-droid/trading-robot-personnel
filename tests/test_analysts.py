@@ -295,7 +295,7 @@ def test_trade_against_4h_trend_blocks():
 def test_price_just_under_resistance_blocks_except_for_breakout():
     df = _candles(200)                                   # plat à 100, mèches à 100,5
     fa = FinancialAnalyst(A.financial)
-    near = dict(candles=df, entry=100.3, stop=98.3, target=104.3)
+    near = {"candles": df, "entry": 100.3, "stop": 98.3, "target": 104.3}
     v = fa.review(_ctx(**near))
     assert v.blocked and "résistance" in v.reason
     assert not fa.review(_ctx(strategy="breakout", **near)).blocked
