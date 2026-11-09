@@ -480,3 +480,20 @@ def test_blocking_advisor_prevents_entries_and_decision_is_journaled(tmp_path):
     blocked = journal._read("SELECT * FROM decisions WHERE advisor='veille'")
     assert blocked and all(d["blocked"] == 1 for d in blocked)
     assert any("bloquée par veille" in m for m in alerts)
+
+
+# --- K1 : une lecture de capital aberrante n'est jamais enregistrée ----------------------------
+
+def test_aberrant_equity_read_is_not_journaled_nor_used(tmp_path):
+    broker = FakeBroker(DATA)
+    equity = {"value": 10_000.0}
+    broker.equity = lambda: equity["value"]
+    eng, journal, _ = _engine(tmp_path, broker)
+    eng.cycle()
+    equity["value"] = 30_000.0                     # lecture aberrante isolée (x3)
+    eng.cycle()
+    assert eng.equity["binance"] == 10_000.0
+    equity["value"] = 10_000.0
+    eng.cycle()
+    values = [p["value"] for p in journal.equity_history("binance")]
+    assert 30_000.0 not in values and values               # jamais vue par l'analyste

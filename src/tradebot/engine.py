@@ -193,9 +193,15 @@ class Engine:
     def _read_equity(self) -> None:
         for name, broker in self.brokers.items():
             try:
-                self.equity[name] = broker.equity()
-                self._j("save_equity", name, self.equity[name])
-                self._breaker_events(name, self.breakers.update_equity(name, self.equity[name]))
+                value = broker.equity()
+                events = self.breakers.update_equity(name, value)
+                self._breaker_events(name, events)
+                if "lecture_a_confirmer" in events:
+                    # K1 : lecture aberrante non confirmée -> ni capital courant, ni journal
+                    # (sinon l'analyste des risques verrait un faux plus haut ou une fausse chute)
+                    continue
+                self.equity[name] = value
+                self._save_equity(name, value)
             except Exception as exc:  # noqa: BLE001
                 self.alert("error", f"{name} : capital illisible ({exc})", key=f"equity:{name}")
 
@@ -534,3 +540,8 @@ class Engine:
             return self.settings.costs.of(platform).fee_pct / 100
         except AttributeError:
             return 0.0
+
+    def _save_equity(self, platform: str, value: float) -> None:
+        """Capital CONFIRMÉ uniquement (K1) : ce que lisent l'analyste des risques, /pret et la
+        courbe du tableau de bord."""
+        self._j("save_equity", platform, value)
