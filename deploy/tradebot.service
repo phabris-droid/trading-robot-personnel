@@ -1,18 +1,27 @@
 [Unit]
-Description=tradebot
+Description=tradebot (solution de repli sans Docker, CDC §8)
+Wants=network-online.target
 After=network-online.target
 
 [Service]
 User=trader
 WorkingDirectory=/opt/tradebot
 EnvironmentFile=/opt/tradebot/.env
+Environment=DASHBOARD_HOST=127.0.0.1
 ExecStart=/opt/tradebot/.venv/bin/python -m tradebot
 Restart=always
+RestartSec=10
 KillSignal=SIGTERM
 TimeoutStopSec=90
+# mêmes protections que le conteneur : seul data/ est inscriptible, aucun privilège
 NoNewPrivileges=true
 ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+CapabilityBoundingSet=
 ReadWritePaths=/opt/tradebot/data
+MemoryMax=1G
 
 [Install]
 WantedBy=multi-user.target

@@ -1,0 +1,74 @@
+"""Étape 10 (CDC §8) : garde-fous des scripts de déploiement, vérifiés SANS les exécuter
+(CLAUDE.md : jamais d'exécution de deploy/*.sh sans demande explicite). La syntaxe et
+shellcheck sont vérifiés par la CI (point « Scripts shell »)."""
+import re
+from pathlib import Path
+
+import yaml
+
+DEPLOY = Path(__file__).parents[1] / "deploy"
+ROOT = Path(__file__).parents[1]
+
+
+def _read(name):
+    return (DEPLOY / name).read_text(encoding="utf-8")
+
+
+def test_scripts_are_strict_bash():
+    for name in ("harden_vps.sh", "install_systemd.sh", "deploy_remote.sh"):
+        text = _read(name)
+        assert text.startswith("#!/usr/bin/env bash") and "set -euo pipefail" in text, name
+    assert _read("audit_vps.sh").startswith("#!/usr/bin/env bash")
+
+
+def test_harden_ssh_key_only_with_automatic_rollback_after_10_minutes():
+    text = _read("harden_vps.sh")
+    for line in ("PasswordAuthentication no", "PermitRootLogin no", "PubkeyAuthentication yes"):
+        assert line in text
+    assert "--on-active=10min" in text and "--confirm-ssh" in text
+    assert "sshd -t" in text                              # config invalide -> annulée
+    assert "aucune clé SSH" in text                       # refuse de s'enfermer dehors
+
+
+def test_harden_firewall_fail2ban_updates_clock_and_backup():
+    text = _read("harden_vps.sh")
+    assert "ufw default deny incoming" in text and "ufw allow OpenSSH" in text
+    assert re.search(r'if \[ "\$HTTPS" -eq 1 \]; then\n\s+ufw allow 80/tcp', text)
+    assert "fail2ban" in text and 'Automatic-Reboot-Time "04:00"' in text
+    assert "chrony" in text
+    assert "tradebot-data" in text and "--symmetric" in text and "-mtime +14" in text
+
+
+def test_audit_is_read_only():
+    text = _read("audit_vps.sh")
+    forbidden = ["apt-get install", "rm -", "systemctl stop", "systemctl restart",
+                 "ufw allow", "chmod ", "docker compose", "> /etc"]
+    assert not [w for w in forbidden if w in text]
+    for check in ("passwordauthentication no", "permitrootlogin no", "ufw", "fail2ban",
+                  "NTPSynchronized", "10001", "ReadonlyRootfs", "127.0.0.1", "600",
+                  "-mtime -1"):
+        assert check in text, check
+
+
+def test_systemd_fallback_refuses_two_robots_and_is_hardened():
+    text = _read("install_systemd.sh")
+    assert "docker ps" in text and "deux robots" in text
+    assert "requirements.lock" in text and ".env doit être en 600" in text
+    unit = _read("tradebot.service")
+    for directive in ("User=trader", "NoNewPrivileges=true", "ProtectSystem=strict",
+                      "ReadWritePaths=/opt/tradebot/data", "KillSignal=SIGTERM",
+                      "TimeoutStopSec=90", "Environment=DASHBOARD_HOST=127.0.0.1"):
+        assert directive in unit, directive
+
+
+def test_containers_hardening_matches_cdc():
+    """Dockerfile et docker-compose (CDC §8) : uid 10001, lecture seule, contrôle de santé,
+    port publié sur 127.0.0.1 seulement — local ET production."""
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    assert "USER 10001" in dockerfile and "HEALTHCHECK" in dockerfile
+    for name in ("docker-compose.yml", "docker-compose.prod.yml"):
+        svc = yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))["services"]["tradebot"]
+        assert svc["read_only"] is True and svc["cap_drop"] == ["ALL"], name
+        assert "no-new-privileges:true" in svc["security_opt"], name
+        assert all(p.startswith("127.0.0.1:") for p in svc["ports"]), name
+        assert svc["stop_grace_period"] == "90s", name

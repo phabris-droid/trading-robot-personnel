@@ -229,7 +229,7 @@ jobs:
             fichiers: tests/test_engine.py tests/test_engine_integration.py
           - domaine: interface & sécurité
             id: interface
-            fichiers: tests/test_dashboard.py tests/test_interfaces.py
+            fichiers: tests/test_dashboard.py tests/test_interfaces.py tests/test_deploy.py
           - domaine: équipe d'analyse
             id: analystes
             fichiers: tests/test_analysts.py
