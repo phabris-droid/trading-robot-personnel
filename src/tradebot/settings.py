@@ -320,6 +320,8 @@ class EngineCfg(Strict):
     # A7 : capital enregistré au plus toutes les N min (et non à chaque cycle) ; borné à 10 min
     # car /pret mesure les coupures (<= 15 min) sur ces points
     equity_save_minutes: int = Field(ge=1, le=10)
+    # M6 : un signal plus vieux que N min après la clôture de sa bougie n'est pas tradé
+    signal_max_age_minutes: int = Field(ge=1, le=60)
 
 
 class Reports(Strict):

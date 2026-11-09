@@ -713,3 +713,35 @@ def test_replaced_oco_reference_is_journaled(tmp_path):
     broker.position = lambda pid: {**(real(pid) or {}), "oco_id": f"{pid}-o2"}
     eng._manage_positions()
     assert journal.position("u0")["protection_ref"] == "u0-o2"
+
+
+def test_size_uses_current_price_and_refuses_price_beyond_stop():
+    """M6 : taille sur le prix actuel ; prix déjà sous le stop -> aucune entrée."""
+    from types import SimpleNamespace
+
+    eng = Engine(SETTINGS, None, connectors={}, alert=lambda *_: None)
+    eng.equity["binance"] = 1000.0
+    market = next(m for m in SETTINGS.markets if m.symbol == "BTCUSDT")
+    sig = SimpleNamespace(side="buy", entry=100.0, stop=95.0, target=120.0)
+    quote = {"q": (89.9, 90.0)}
+    broker = SimpleNamespace(quote=lambda s: quote["q"], min_qty=lambda s: 0.0)
+    qty, why = eng._size(market, broker, sig)
+    assert qty == 0 and "hors" in why
+    quote["q"] = (99.0, 99.1)
+    near, _ = eng._size(market, broker, sig)
+    quote["q"] = (97.0, 97.1)
+    closer, _ = eng._size(market, broker, sig)
+    assert closer > near > 0                  # plus près du stop -> plus grande taille
+
+
+def test_stale_signal_is_not_traded(tmp_path):
+    """M6 : bougie clôturée depuis plus de signal_max_age_minutes -> aucune entrée."""
+    broker = FakeBroker(DATA)
+    late = {"t": 0.0}
+    eng, journal, _ = _engine(tmp_path, broker, clock=lambda: late["t"])
+    late["t"] = float(DATA["BTCUSDT"]["close_ts"].iloc[broker.i - 1])
+    eng.cycle()                                     # 1re bougie mémorisée
+    broker.i += 1
+    late["t"] = float(DATA["BTCUSDT"]["close_ts"].iloc[broker.i - 1]) + 3 * 3600 - 60
+    eng._decide(next(m for m in SETTINGS.markets if m.symbol == "BTCUSDT"))
+    assert broker.open_calls == []

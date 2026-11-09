@@ -135,6 +135,7 @@ engine:
   platform_reconnect_minutes: 5
   watchdog_minutes: 5              # alerte si aucun cycle depuis 5 min
   equity_save_minutes: 5           # A7 : capital journalisé toutes les 5 min (/pret : coupures)
+  signal_max_age_minutes: 15       # M6 : signal périmé (robot en retard) -> pas d'entrée
 
 costs:                             # frais et spread : taille de position, backtest, P&L estimé
   # stop_slippage_pct (A5) : glissement prudent d'un stop, backtest seulement (à confirmer J1)

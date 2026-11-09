@@ -359,6 +359,11 @@ class Engine:
             return
         self._j("save_signal", symbol, last_ts, market.strategy, sig.side, sig.entry, sig.stop,
                 sig.target, sig.reason)
+        age = self.now() - last_ts
+        if age > self.settings.engine.signal_max_age_minutes * 60:
+            self._j("save_decision", symbol, last_ts, "moteur", True,
+                    f"signal périmé ({int(age // 60)} min après la clôture)")
+            return
         refusal = self._engine_checks(symbol, market.platform)
         if refusal:
             self._j("save_decision", symbol, last_ts, "moteur", True, refusal)
@@ -437,14 +442,21 @@ class Engine:
         if not equity:
             return 0.0, "capital inconnu"
         bid, ask = broker.quote(market.symbol)
+        # M6 : taille calculée sur le prix ACTUEL (ask à l'achat, bid à la vente), pas sur la
+        # clôture du signal ; prix déjà au-delà du stop ou de l'objectif -> aucune entrée
+        price = ask if sig.side == "buy" else bid
+        inside = (sig.stop < price < sig.target if sig.side == "buy"
+                  else sig.target < price < sig.stop)
+        if not inside:
+            return 0.0, f"prix actuel {price} hors de l'intervalle stop / objectif"
         min_qty = broker.min_qty(market.symbol) if hasattr(broker, "min_qty") else 0.0
         # plafond de 25 % : marge (levier) pour Capital.com, valeur pour Binance (A1)
         leverage = (broker.leverage(market.symbol)
                     if market.platform in FOREX_PLATFORMS and hasattr(broker, "leverage")
                     else 1.0)
         r = self.settings.risk
-        fee_rt = 2 * self._fee_rate(market.platform) * sig.entry
-        return position_size(equity, sig.entry, sig.stop, ask - bid, fee_rt,
+        fee_rt = 2 * self._fee_rate(market.platform) * price
+        return position_size(equity, price, sig.stop, ask - bid, fee_rt,
                              risk_pct=r.risk_per_trade_pct, max_pos_pct=r.max_position_pct,
                              min_qty=min_qty, small_account_max_pct=r.small_account_max_risk_pct,
                              max_spread_to_stop=r.max_spread_to_stop, leverage=leverage)
