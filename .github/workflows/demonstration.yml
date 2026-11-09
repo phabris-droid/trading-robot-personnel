@@ -61,6 +61,29 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  comportement:
+    name: Étude du comportement (moteur complet, 6 mois de vrais prix)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/python-env
+      - name: Prix publics Binance (miroir officiel)
+        run: |
+          sed -i 's#market_data_url: https://api.binance.com#market_data_url: https://data-api.binance.vision#' \
+            config/config.yaml
+      - name: Simulation heure par heure (analystes, disjoncteurs, stops ; aucun ordre réel)
+        run: python scripts/simulate.py --months 6 --capital 100 --out simulation.md
+      - name: Résumé
+        if: always()
+        run: cat simulation.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: etude-comportement
+          path: simulation.md
+          if-no-files-found: ignore
+
   robot:
     name: Robot en marche (démo sans clés, 3 min)
     runs-on: ubuntu-24.04

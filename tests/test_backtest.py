@@ -303,3 +303,17 @@ def test_stop_exits_include_gap_and_slippage(data, full):
             half = b.spread_pct / 100 / 2
             raw = t.exit / (1 - half) if t.side == "buy" else t.exit / (1 + half)
             assert (raw <= row["open"] + 1e-9) if t.side == "buy" else (raw >= row["open"] - 1e-9)
+
+
+def test_behaviour_simulation_runs_the_full_engine_on_candles(tmp_path):
+    """scripts/simulate.py : le vrai moteur (analystes, disjoncteurs, stops) rejoué bougie
+    par bougie ; jamais de position sans stop, rapport complet."""
+    sim = _script("simulate")
+    data = {s: _walk(n=700, seed=i + 5) for i, s in enumerate(["BTCUSDT", "ETHUSDT", "SOLUSDT"])}
+    res = sim.simulate(S, data, 100.0, tmp_path / "tradebot_demo.db")
+    text = sim.report(res, 100.0, 1)
+    assert "## Résultat global" in text and "## Ce qui a bloqué les entrées" in text
+    assert len(res["curve"]) == 400
+    for p in res["broker"].pos.values():
+        assert p["stop"] < p["entry"] < p["target"]
+    res["journal"].close()
