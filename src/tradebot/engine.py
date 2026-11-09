@@ -509,3 +509,21 @@ class Engine:
                                f"{last.reason}")
             return True
         return False
+
+    # --- lecture publique (tableau de bord, Telegram, rapports) -----------------------------
+
+    def now(self) -> float:
+        return self._clock()
+
+    def open_positions(self) -> list[dict]:
+        return self._open_rows()
+
+    def status(self) -> str:
+        """actif | en pause | arrêt d'urgence | arrêt de sécurité (CDC §7)."""
+        if any(self.breakers.safety_stopped(p) for p in self.brokers):
+            return "arrêt de sécurité"
+        if self.control["emergency"]:
+            return "arrêt d'urgence"
+        if self.control["paused"] or self.paused:
+            return "en pause"
+        return "actif"

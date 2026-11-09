@@ -54,6 +54,24 @@ def record_position(journal: Journal, platform: str, pos: dict, strategy: str = 
         _j(journal.set_protection, pos["id"], pos["oco_id"])
 
 
+def record_closed_at_once(journal: Journal, broker, platform: str, position_id: str,
+                          strategy: str = "") -> None:
+    """Position ouverte puis fermée aussitôt faute de stop : elle figure quand même dans le
+    journal (cohérence vérifiée par /pret). Prix de sortie inconnu ici : celui d'entrée,
+    résultat 0 (approximation signalée dans la raison de clôture)."""
+    pos = broker.position(position_id)
+    if not pos or not pos.get("qty"):
+        return
+    try:
+        record_position(journal, platform, pos, strategy)
+    except ValueError:          # données incomplètes : rien à ajouter au journal
+        return
+    _j(journal.close_position, pos["id"], pos["entry"],
+       "stop impossible : fermée aussitôt (prix de sortie approximé)")
+    _j(journal.save_trade, pos["id"], platform, pos["symbol"], pos.get("side", "buy"),
+       pos["qty"], pos["entry"], pos["entry"], 0.0, 0.0)
+
+
 def open_trade(journal: Journal, broker, platform: str, market: str, side: str, qty: float,
                stop: float, target: float, client_id: str, strategy: str = "",
                alert: Alert = _no_alert) -> EntryResult:
@@ -71,6 +89,7 @@ def open_trade(journal: Journal, broker, platform: str, market: str, side: str, 
     except StopNotPlaced as exc:
         _j(journal.save_order, **order, status="filled", broker_id=exc.position_id)
         if exc.closed:
+            record_closed_at_once(journal, broker, platform, exc.position_id, strategy)
             alert("error", f"{market} : {exc}")
             return EntryResult("closed_no_stop", None, str(exc))
         pos = broker.position(exc.position_id)
@@ -107,7 +126,10 @@ def resolve_uncertain(journal: Journal, brokers: dict, now: int, pause_after_s: 
                                        qty=o["qty"], created_ts=o["created_ts"])
         except StopNotPlaced as exc:
             _j(journal.save_order, **order, status="filled", broker_id=exc.position_id)
-            if not exc.closed:
+            if exc.closed:
+                record_closed_at_once(journal, broker, o["platform"], exc.position_id,
+                                      o["strategy"])
+            else:
                 pos = broker.position(exc.position_id)
                 if pos:
                     record_position(journal, o["platform"], pos, o["strategy"])

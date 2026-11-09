@@ -462,6 +462,32 @@ class Journal:
         self._write(_Op("UPDATE positions SET protection_ref=? WHERE id=?",
                         (ref, position_id), critical=True))
 
+    # -- lectures pour les rapports, le tableau de bord et /pret (CDC §7, §10) ---------------
+
+    def trades_since(self, ts: float) -> list[dict]:
+        """Trades clôturés depuis `ts`, avec la stratégie de la position (récents d'abord)."""
+        return self._read("SELECT t.*, COALESCE(p.strategy, '') AS strategy FROM trades t "
+                          "LEFT JOIN positions p ON p.id = t.position_id WHERE t.ts >= ? "
+                          "ORDER BY t.ts DESC, t.rowid DESC", (int(ts),))
+
+    def events_since(self, ts: float) -> list[dict]:
+        return self._read("SELECT ts, level, message FROM events WHERE ts >= ? ORDER BY ts",
+                          (int(ts),))
+
+    def equity_points(self, since_ts: float) -> list[dict]:
+        """Toutes plateformes : (ts, platform, value), dans l'ordre chronologique."""
+        return self._read("SELECT ts, platform, value FROM equity WHERE ts >= ? ORDER BY ts",
+                          (int(since_ts),))
+
+    def first_activity_ts(self) -> float | None:
+        rows = self._read("SELECT MIN(ts) AS t FROM equity")
+        return rows[0]["t"] if rows and rows[0]["t"] is not None else None
+
+    def filled_orders_without_position(self) -> list[dict]:
+        """Cohérence du journal (/pret) : tout ordre exécuté doit avoir sa position."""
+        return self._read("SELECT * FROM orders o WHERE o.status = 'filled' AND NOT EXISTS "
+                          "(SELECT 1 FROM positions p WHERE p.client_id = o.client_id)")
+
     def count_opened_since(self, ts: int) -> int:
         """Nombre de positions ouvertes depuis `ts` (toutes plateformes) : 10 trades/jour."""
         rows = self._read("SELECT COUNT(*) AS n FROM positions WHERE opened_ts >= ?", (int(ts),))

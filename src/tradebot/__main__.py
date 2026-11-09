@@ -64,20 +64,42 @@ def main() -> int:
     except (ConfigError, JournalError) as exc:
         print(f"Démarrage refusé : {exc}", file=sys.stderr)
         return 2
-    from tradebot.engine import Engine
-    from tradebot.interfaces.dashboard import configure_health
-
     from tradebot.analysts import build_analysts
+    from tradebot.analysts.claude_ai import ClaudeAdvisor
+    from tradebot.engine import Engine
+    from tradebot.interfaces.dashboard import configure_engine, configure_health
+    from tradebot.interfaces.telegram_bot import Commands, TelegramService, notification_filter
+    from tradebot.scheduler import Jobs, build_scheduler
+
+    owner = env.get("TELEGRAM_OWNER_CHAT_ID", "")
+    telegram = TelegramService(env.get("TELEGRAM_BOT_TOKEN", ""), owner)
+
+    def alert(level: str, message: str) -> None:
+        _alert(level, message)
+        if notification_filter(level, message):
+            telegram.send(f"[{level.upper()}] {message}")
 
     analysts, news = build_analysts(settings, env)   # IA désactivée sans ANTHROPIC_API_KEY
+    ai = next((a for a in analysts if isinstance(a, ClaudeAdvisor)), None)
     engine = Engine(settings, journal, connectors=_connectors(settings, journal, env),
-                    analysts=analysts, news=news)
+                    alert=alert, analysts=analysts, news=news)
+    telegram.commands = Commands(engine, owner, news, ai, audits_dir=settings.storage.audits_dir)
+    telegram.start()
+    jobs = Jobs(engine, telegram.send if telegram.enabled else (lambda m: _alert("info", m)),
+                news, ai, env.get("HEALTHCHECKS_URL", ""))
+    scheduler = build_scheduler(jobs, settings)
+    scheduler.start()
     # /health = moteur vivant : dernier cycle de moins de N min (chien de garde, CDC §8)
     configure_health(lambda: engine.last_cycle_ts,
                      settings.engine.watchdog_minutes * 60 + 2 * settings.cycle_seconds)
+    configure_engine(engine)
     _start_dashboard(settings.dashboard.port, env, settings.mode)
-    print(f"Robot démarré en mode {settings.mode.upper()}", flush=True)
+    started = ("Robot démarré en MODE RÉEL" if settings.mode == "live"
+               else "Robot démarré en mode DEMO")
+    print(started, flush=True)
+    telegram.send(started)
     engine.run()
+    scheduler.shutdown(wait=False)
     journal.close()
     print("Robot arrêté proprement", flush=True)
     return 0

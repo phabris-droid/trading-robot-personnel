@@ -127,3 +127,82 @@ def index(_user: str = Depends(require_auth)) -> str:
 @app.get("/api/status")
 def status(_user: str = Depends(require_auth)) -> dict:
     return {"mode": _auth.mode}
+
+
+# --- état du robot et actions (CDC §7) -------------------------------------------------------
+
+_engine_ref: dict = {"engine": None}
+CURVE_POINTS = 300
+
+
+def configure_engine(engine) -> None:
+    """Moteur exposé au tableau de bord (lecture + Pause / Reprendre / Arrêt d'urgence)."""
+    _engine_ref["engine"] = engine
+
+
+def _engine():
+    engine = _engine_ref["engine"]
+    if engine is None:
+        raise HTTPException(503, "moteur non démarré")
+    return engine
+
+
+def _curve(journal, now: float) -> list[dict]:
+    """Courbe du capital total sur 7 jours (dernière valeur de chaque plateforme cumulée),
+    réduite à CURVE_POINTS points."""
+    if journal is None:
+        return []
+    last: dict[str, float] = {}
+    points = []
+    for p in journal.equity_points(now - 7 * 86_400):
+        last[p["platform"]] = p["value"]
+        points.append({"ts": p["ts"], "value": round(sum(last.values()), 2)})
+    step = max(1, len(points) // CURVE_POINTS)
+    return points[::step][-CURVE_POINTS:]
+
+
+@app.get("/api/state")
+def state(_user: str = Depends(require_auth)) -> dict:
+    from tradebot.interfaces.reports import pnl_summary
+
+    e = _engine()
+    now = e.now()
+    journal = e.journal
+    return {
+        "mode": e.settings.mode, "statut": e.status(), "maintenant": now,
+        "dernier_cycle": e.last_cycle_ts,
+        "capital": {k: round(v, 2) for k, v in e.equity.items()},
+        "capital_total": round(sum(e.equity.values()), 2),
+        "courbe": _curve(journal, now),
+        "positions": [{k: r.get(k) for k in ("market", "side", "qty", "entry", "stop", "target",
+                                              "platform")} for r in e.open_positions()],
+        "trades": journal.recent_trades(50) if journal else [],
+        "pnl": pnl_summary(journal, now),
+        "evenements": journal.events(50) if journal else [],
+        "marches_en_pause": e.paused,
+    }
+
+
+@app.post("/api/pause")
+def pause(_user: str = Depends(require_auth)) -> dict:
+    _engine().pause_entries("tableau de bord")
+    return {"statut": _engine().status()}
+
+
+@app.post("/api/reprendre")
+def resume(_user: str = Depends(require_auth)) -> dict:
+    _engine().resume_entries()
+    return {"statut": _engine().status()}
+
+
+@app.post("/api/urgence")
+async def emergency(request: Request, _user: str = Depends(require_auth)) -> dict:
+    """ARRÊT D'URGENCE : fermer toutes les positions. Confirmation explicite obligatoire."""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    if not isinstance(body, dict) or body.get("confirmer") is not True:
+        raise HTTPException(400, "confirmation requise : {\"confirmer\": true}")
+    _engine().request_emergency_stop("tableau de bord")
+    return {"statut": _engine().status()}
