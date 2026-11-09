@@ -302,9 +302,26 @@ class Engine:
                     self._record_close(row, broker, reason)
             except PositionInconsistent as exc:
                 self._pause(row["market"], str(exc))
+                self._software_stop(row, broker)
             except Exception as exc:  # noqa: BLE001
                 self.alert("error", f"{row['market']} : gestion de la position impossible "
                                     f"({type(exc).__name__}: {exc})", key=f"pos:{row['id']}")
+                self._software_stop(row, broker)
+
+    def _software_stop(self, row: dict, broker) -> None:
+        """Audit trading n° 6 : même quand la vérification du stop chez la plateforme échoue,
+        le stop logiciel reste actif (prix acheteur / vendeur contre le stop du journal)."""
+        try:
+            bid, ask = broker.quote(row["market"])
+            crossed = bid <= row["stop"] if row["side"] == "buy" else ask >= row["stop"]
+            if not crossed:
+                return
+            broker.close_position(row["id"])
+            self._record_close(row, broker, "stop logiciel (stop chez la plateforme incertain)")
+        except Exception as exc:  # noqa: BLE001
+            self.alert("critical", f"{row['market']} : stop logiciel franchi mais fermeture "
+                                   f"impossible ({type(exc).__name__}: {exc})",
+                       key=f"swstop:{row['id']}")
 
     def _save_protection(self, row: dict, broker) -> None:
         """M2 : nouvel identifiant de l'OCO reposé enregistré dans le journal (sinon, au

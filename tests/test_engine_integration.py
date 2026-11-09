@@ -8,7 +8,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tradebot.brokers.base import BrokerUnavailable, OrderUncertain, StopNotPlaced
+from tradebot.brokers.base import (
+    BrokerUnavailable,
+    OrderUncertain,
+    PositionInconsistent,
+    StopNotPlaced,
+)
 from tradebot.engine import Engine
 from tradebot.journal import Journal
 from tradebot.settings import load_settings
@@ -787,3 +792,17 @@ def test_audit3_order_left_pending_by_a_crash_is_searched_as_uncertain(tmp_path)
     assert [o["client_id"] for o in journal.orders()
             if o["status"] in ("uncertain", "filled", "rejected")] == ["BTCUSDT-crash"]
     assert any("interrompu" in m for _, m in alerts)
+
+
+def test_audit6_inconsistent_position_keeps_its_software_stop(tmp_path):
+    """Audit trading n° 6 : ensure_stop en erreur, prix sous le stop : la position est fermée
+    par le stop logiciel."""
+    broker, eng, journal, _ = _with_positions(tmp_path, n=1)
+    row = journal.open_positions()[0]
+
+    def broken(pid):
+        raise PositionInconsistent(pid, "sortie partielle")
+    broker.ensure_stop = broken
+    broker.quote = lambda symbol: (row["stop"] * 0.99, row["stop"] * 0.995)
+    eng._manage_positions()
+    assert journal.open_positions() == []
