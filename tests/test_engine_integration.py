@@ -538,3 +538,18 @@ def test_advisors_receive_the_real_risk_of_the_sized_trade(tmp_path):
         / ctx.equity * 100
     assert ctx.risk_pct == pytest.approx(expected)
     assert 0 < ctx.risk_pct <= SETTINGS.risk.small_account_max_risk_pct
+
+
+def test_market_pause_survives_restart_and_is_lifted_by_resume(tmp_path):
+    """K8 : une pause par marché (ordre incertain, position incohérente…) n'est pas oubliée
+    au redémarrage ; /reprendre la lève et l'efface du journal."""
+    broker = FakeBroker(DATA)
+    eng, journal, alerts = _engine(tmp_path, broker)
+    eng._pause("ETHUSDT", "position incohérente")
+    restarted, _, _ = _engine(tmp_path, broker, journal)
+    assert restarted.paused == {"ETHUSDT": "position incohérente"}
+    assert restarted.status() != "actif"
+    restarted.resume_entries()
+    assert restarted.paused == {}
+    again, _, _ = _engine(tmp_path, broker, journal)
+    assert again.paused == {} and again.status() == "actif"

@@ -66,11 +66,12 @@ class Engine:
         self._stop = False
         self.cycles = 0
         self.last_cycle_ts: float | None = None  # battement de cœur (chien de garde)
-        self.paused: dict[str, str] = {}         # marché -> raison (pause jusqu'à intervention)
         self.blocked: set[str] = set()           # marchés bloqués ce cycle (ordre incertain)
         self.equity: dict[str, float] = {}
         self.breakers = Breakers(settings.risk, journal, clock)   # disjoncteurs (CDC §4)
         self.control = self._load_control()   # arrêt d'urgence, pause globale (persistants)
+        # K8 : marché -> raison, pause jusqu'à /reprendre, conservée au redémarrage
+        self.paused: dict[str, str] = self.control["markets"]
         self._last_connect: dict[str, float] = {}
         self._seen: dict[str, int] = {}          # dernière bougie vue (copie mémoire)
         self._last_alerts: dict[str, str] = {}
@@ -105,6 +106,7 @@ class Engine:
     def _pause(self, market: str, reason: str) -> None:
         if self.paused.get(market) != reason:
             self.paused[market] = reason
+            self._save_control()
             self.alert("critical", f"{market} en pause : {reason}")
 
     # --- boucle -----------------------------------------------------------------------------
@@ -421,10 +423,12 @@ class Engine:
 
     def _load_control(self) -> dict[str, Any]:
         saved = self._j("get_state", "engine")
-        base: dict[str, Any] = {"emergency": False, "attempts": 0, "paused": ""}
+        base: dict[str, Any] = {"emergency": False, "attempts": 0, "paused": "", "markets": {}}
         if saved:
             with suppress(ValueError):          # état illisible : valeurs par défaut
                 base.update(json.loads(saved))
+        if not isinstance(base["markets"], dict):
+            base["markets"] = {}
         return base
 
     def _save_control(self) -> None:
@@ -450,8 +454,11 @@ class Engine:
             self.alert("warning", "Reprise refusée : arrêt d'urgence en cours")
             return
         self.control["paused"] = ""
+        markets = sorted(self.paused)
+        self.paused.clear()                     # K8 : /reprendre lève aussi les pauses par marché
         self._save_control()
-        self.alert("info", "Entrées reprises")
+        self.alert("info", "Entrées reprises" + (f" (marchés : {', '.join(markets)})"
+                                                 if markets else ""))
 
     def _emergency_close(self) -> None:
         if not self.control["emergency"]:
