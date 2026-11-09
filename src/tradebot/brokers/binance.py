@@ -638,8 +638,10 @@ class BinanceSpot(Broker):
             pos.status = "inconsistent"
             raise PositionInconsistent(pos.id, f"{locked} {f.base_asset} bloqués par un ordre "
                                                "introuvable : vérifier à la main")
-        robot_total = max(0.0, free + locked - float(self.baseline.get(f.base_asset, 0.0)))
-        return min(free, robot_total)
+        # calcul DÉCIMAL exact (0,50122 - 0,5 en flottant donnerait 0,0012199… -> 0,00121)
+        robot_total = max(Decimal(0), Decimal(str(free)) + Decimal(str(locked))
+                          - Decimal(str(self.baseline.get(f.base_asset, 0.0))))
+        return float(min(Decimal(str(free)), robot_total))
 
     def _consume_exit(self, pos: BinancePosition, executed: Decimal,
                       fill: dict | None = None) -> bool:
