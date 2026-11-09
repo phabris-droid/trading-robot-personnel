@@ -40,7 +40,7 @@ tradebot = ["interfaces/static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]   # tests : données simulées partagées (binance_data, D8)
 
 [tool.ruff]
 line-length = 100

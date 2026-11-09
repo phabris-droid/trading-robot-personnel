@@ -17,22 +17,12 @@ from tradebot.brokers.base import (
 )
 from tradebot.brokers.binance import BinanceSpot
 
-DEMO = "demo-api.binance.com"
-LIVE = "api.binance.com"
+from binance_data import BOOK, DEMO, EXCHANGE_INFO, LIVE  # D8 : données communes
+
 NOW = 1_700_000_000.0          # horloge figée (secondes)
 NOW_MS = int(NOW * 1000)
 SECRET = "secret-de-test"
 
-EXCHANGE_INFO = {"symbols": [{
-    "symbol": "BTCUSDT", "baseAsset": "BTC", "quoteAsset": "USDT",
-    "filters": [
-        {"filterType": "PRICE_FILTER", "minPrice": "0.01", "maxPrice": "1000000",
-         "tickSize": "0.01"},
-        {"filterType": "LOT_SIZE", "minQty": "0.00001", "maxQty": "9000",
-         "stepSize": "0.00001"},
-        {"filterType": "NOTIONAL", "minNotional": "5.00000000"},
-    ]}]}
-BOOK = {"symbol": "BTCUSDT", "bidPrice": "60000.00", "askPrice": "60001.00"}
 FILL = {"orderId": 1, "clientOrderId": "t1", "status": "FILLED", "executedQty": "0.00123",
         "cummulativeQuoteQty": "73.80123",
         "fills": [{"price": "60001.00", "qty": "0.00123", "commission": "0.00000123",

@@ -7,17 +7,9 @@ from tradebot.brokers.binance import BinanceSpot
 from tradebot.execution.orders import open_trade, resolve_uncertain
 from tradebot.journal import Journal
 
-DEMO = "demo-api.binance.com"
-LIVE = "api.binance.com"
+from binance_data import DEMO, EXCHANGE_INFO, LIVE  # D8 : données communes
+
 NOW = 1_700_000_000
-EXCHANGE_INFO = {"symbols": [{
-    "symbol": "BTCUSDT", "baseAsset": "BTC", "quoteAsset": "USDT",
-    "filters": [
-        {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
-        {"filterType": "LOT_SIZE", "minQty": "0.00001", "maxQty": "9000",
-         "stepSize": "0.00001"},
-        {"filterType": "NOTIONAL", "minNotional": "5"},
-    ]}]}
 
 
 @pytest.fixture
