@@ -512,7 +512,8 @@ class BinanceSpot(Broker):
         return self._protect_new(symbol, client_id, executed, fill.get("fills", []),
                                  Decimal(str(fill.get("cummulativeQuoteQty", "0"))), stop, target)
 
-    def recover_order(self, client_id: str, symbol: str, stop: float, target: float) -> str | None:
+    def recover_order(self, client_id: str, symbol: str, stop: float, target: float,
+                      **_context) -> str | None:
         """Ordre d'achat au statut incertain (CDC §6), recherché à chaque cycle :
         - introuvable ou refusé sans exécution : None (aucune position) ;
         - exécuté : la position est créée et l'OCO posé avec le stop et l'objectif du

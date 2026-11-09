@@ -80,7 +80,7 @@ class FakeBroker:
         self._create(client_id, symbol, side, qty, stop, target)
         return client_id
 
-    def recover_order(self, client_id, symbol, stop, target):
+    def recover_order(self, client_id, symbol, stop, target, **_context):
         self._fault("recover_order")
         if client_id in self.pos:
             return client_id

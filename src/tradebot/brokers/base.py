@@ -6,7 +6,8 @@ from typing import Literal
 
 import pandas as pd
 
-StopStatus = Literal["ok", "replaced", "closed_by_platform", "closed_no_stop"]
+# absent_once : position introuvable une fois (Capital.com) ; fermée seulement à la 2e absence
+StopStatus = Literal["ok", "replaced", "closed_by_platform", "closed_no_stop", "absent_once"]
 
 
 class BrokerError(Exception):

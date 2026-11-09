@@ -211,7 +211,7 @@ jobs:
             fichiers: tests/test_strategies_no_lookahead.py tests/test_risk.py
           - domaine: plateformes & exécution
             id: plateformes
-            fichiers: tests/test_binance.py tests/test_execution.py
+            fichiers: tests/test_binance.py tests/test_capital.py tests/test_execution.py
           - domaine: journal & configuration
             id: journal
             fichiers: tests/test_journal.py tests/test_config.py

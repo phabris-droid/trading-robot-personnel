@@ -34,7 +34,7 @@ def _alert(level: str, message: str) -> None:
 
 def _connectors(settings, journal, env) -> dict:
     """Fonctions de connexion des plateformes (relancées toutes les 5 min en cas d'échec).
-    Capital.com reste désactivé tant que l'étape 3 n'est pas faite."""
+    Une plateforme sans clés reste simplement déconnectée (alerte, nouvel essai)."""
     out = {}
     if settings.platforms.binance.enabled:
         def binance():
@@ -45,6 +45,14 @@ def _connectors(settings, journal, env) -> dict:
             bn.ensure_baseline(journal)     # avoirs personnels : relevés une seule fois
             return bn
         out["binance"] = binance
+    if settings.platforms.capital.enabled:
+        def capital():
+            from tradebot.brokers.capital import CapitalCFD
+
+            cap = CapitalCFD.from_settings(settings, env)
+            cap.login()                     # session CST + X-SECURITY-TOKEN
+            return cap
+        out["capital"] = capital
     return out
 
 

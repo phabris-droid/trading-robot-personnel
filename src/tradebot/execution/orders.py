@@ -103,7 +103,8 @@ def resolve_uncertain(journal: Journal, brokers: dict, now: int, pause_after_s: 
             report.blocked.add(market)
             continue
         try:
-            pid = broker.recover_order(cid, market, o["stop"], o["target"])
+            pid = broker.recover_order(cid, market, o["stop"], o["target"], side=o["side"],
+                                       qty=o["qty"], created_ts=o["created_ts"])
         except StopNotPlaced as exc:
             _j(journal.save_order, **order, status="filled", broker_id=exc.position_id)
             if not exc.closed:

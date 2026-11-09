@@ -220,6 +220,10 @@ class Engine:
                     self._record_close(row, broker, "stop/objectif plateforme"
                                        if status == "closed_by_platform" else "stop impossible")
                     continue
+                if status == "absent_once":
+                    # introuvable une fois : fermée seulement à la 2e absence (CDC §6) ;
+                    # aucune action ce cycle, pour ne pas compter deux absences d'un coup
+                    continue
                 if status == "replaced":
                     self.alert("warning", f"{row['market']} : stop reposé chez la plateforme")
                 reason = self._exit_reason(row, broker)
@@ -323,8 +327,20 @@ class Engine:
                              max_spread_to_stop=r.max_spread_to_stop)
 
     def _reconcile(self) -> None:
-        """La plateforme fait foi (CDC §6) : avoir inexpliqué -> pause de la plateforme."""
+        """La plateforme fait foi (CDC §6) : avoir inexpliqué -> pause de la plateforme ;
+        position ouverte à la main -> signalée, jamais reprise."""
         for name, broker in self.brokers.items():
+            if hasattr(broker, "manual_positions"):
+                try:
+                    manual = broker.manual_positions()
+                except Exception as exc:  # noqa: BLE001
+                    self.alert("error", f"{name} : réconciliation impossible ({exc})",
+                               key=f"reco:{name}")
+                    continue
+                if manual:
+                    ids = ", ".join(f"{p['epic']} {p['side']} {p['size']}" for p in manual)
+                    self.alert("warning", f"{name} : position(s) ouverte(s) à la main, non "
+                                          f"gérée(s) par le robot : {ids}", key=f"manuel:{name}")
             if not hasattr(broker, "untracked_balances"):
                 continue
             try:
