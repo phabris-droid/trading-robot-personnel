@@ -288,3 +288,9 @@ def test_page_has_no_external_resource(client):
     assert "http://" not in html.replace("http://127", "") and "https://" not in html
     assert "setInterval(charger, 10000)" in html and "ARRÊT D'URGENCE" in html
 
+
+
+def test_missing_validation_explains_how_to_run_it_in_the_container(journal, tmp_path):
+    [crit] = [c for c in reports.readiness(journal, S, T0, tmp_path / "absent.json")
+              if c.name.startswith("Validation")]
+    assert not crit.ok and "docker compose exec tradebot" in crit.value

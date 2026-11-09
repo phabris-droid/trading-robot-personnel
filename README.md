@@ -48,6 +48,9 @@ docker compose up -d --build
 - Journaux : `docker compose logs -f`
 - Arrêt : `docker compose down` (les données restent dans le volume `tradebot-data`)
 - Après une modification du code ou de `config/config.yaml` : `docker compose up -d --build`
+- Validation historique (avant la démo, CDC §3) : **dans le conteneur**, pour que le robot voie le
+  résultat dans son volume de données (`/pret`) : `docker compose exec tradebot python scripts/validate_markets.py`
+  (sur le VPS : `docker compose -f docker-compose.prod.yml exec tradebot python scripts/validate_markets.py`)
 
 Sans fichier `.env`, le robot démarre en **démo, sans clés** (aucun ordre possible).
 Pour brancher les comptes démo : `cp .env.example .env`, remplir les clés, relancer.
@@ -64,7 +67,7 @@ docker run --rm -v "$PWD":/app -w /app python:3.12-slim \
 ```bash
 python -m pip install -e ".[dev]"
 python -m pytest -q
-python scripts/validate_markets.py          # désactiver les marchés « A_REVOIR »
+python scripts/validate_markets.py          # hors Docker : écrit ./data/validation.json
 ```
 
 Voir `STACK.md` pour les choix techniques.

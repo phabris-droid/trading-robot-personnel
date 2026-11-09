@@ -214,7 +214,8 @@ def _validation(settings, path: str | Path) -> Criterion:
         verdicts = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return Criterion("Validation historique (tous les marchés actifs OK)",
-                         "non lancée (scripts/validate_markets.py)", False)
+                         "non lancée : docker compose exec tradebot python "
+                         "scripts/validate_markets.py", False)
     ko = [s for s in active if verdicts.get(s) != "OK"]
     return Criterion("Validation historique (tous les marchés actifs OK)",
                      "OK" if not ko else f"à revoir : {', '.join(ko)}", not ko)
