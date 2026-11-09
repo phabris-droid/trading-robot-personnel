@@ -497,3 +497,44 @@ def test_aberrant_equity_read_is_not_journaled_nor_used(tmp_path):
     eng.cycle()
     values = [p["value"] for p in journal.equity_history("binance")]
     assert 30_000.0 not in values and values               # jamais vue par l'analyste
+
+
+# --- K5 : les conseillers voient le risque réel du trade -----------------------------------------
+
+def test_advisors_receive_the_real_risk_of_the_sized_trade(tmp_path):
+    from tradebot.analysts.base import Advisor, Verdict
+
+    seen = []
+
+    class Spy(Advisor):
+        name = "espion"
+
+        def review(self, ctx):
+            seen.append(ctx)
+            return Verdict(self.name, False)
+
+    broker = FakeBroker(DATA)
+    sizes = {}
+    real_open = broker.open_position
+
+    def open_position(symbol, side, qty, stop, target, client_id):
+        sizes[symbol] = qty
+        return real_open(symbol, side, qty, stop, target, client_id)
+    broker.open_position = open_position
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    eng = Engine(SETTINGS, journal, connectors={"binance": lambda: broker},
+                 alert=lambda *_: None,
+                 clock=lambda: broker.data["BTCUSDT"]["close_ts"].iloc[broker.i - 1],
+                 analysts=[Spy()])
+    for _ in range(200):
+        eng.cycle()
+        broker.i += 1
+        if sizes:
+            break
+    assert seen and sizes
+    ctx = next(c for c in seen if c.symbol in sizes)
+    fee = SETTINGS.costs.binance.fee_pct / 100
+    expected = sizes[ctx.symbol] * (abs(ctx.entry - ctx.stop) + 2 * fee * ctx.entry) \
+        / ctx.equity * 100
+    assert ctx.risk_pct == pytest.approx(expected)
+    assert 0 < ctx.risk_pct <= SETTINGS.risk.small_account_max_risk_pct

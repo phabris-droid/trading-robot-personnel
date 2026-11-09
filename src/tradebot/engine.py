@@ -316,11 +316,13 @@ class Engine:
         if refusal:
             self._j("save_decision", symbol, last_ts, "moteur", True, refusal)
             return
-        if self._advisors_block(market, sig, df, last_ts):
-            return
         qty, why = self._size(market, broker, sig)
         if qty <= 0:
             self._j("save_decision", symbol, last_ts, "taille", True, why)
+            return
+        # K5 : les conseillers voient le risque RÉEL du trade (jusqu'à 3 % en petit compte),
+        # pas 1 % fixe (amélioration P2 du CDC §11)
+        if self._advisors_block(market, sig, df, last_ts, self._real_risk_pct(market, sig, qty)):
             return
         self._j("save_decision", symbol, last_ts, "moteur", False, "")
         result = open_trade(self.journal, broker, market.platform, symbol, sig.side, qty,
@@ -492,7 +494,14 @@ class Engine:
             self.alert("warning", f"veille : source {source} indisponible ({err}), les autres "
                                   "contrôles s'appliquent", key=f"veille:{source}")
 
-    def _advisors_block(self, market, sig, df, candle_ts: int) -> bool:
+    def _real_risk_pct(self, market, sig, qty: float) -> float:
+        equity = self.equity.get(market.platform) or 0.0
+        if equity <= 0:
+            return self.settings.risk.risk_per_trade_pct
+        per_unit = abs(sig.entry - sig.stop) + 2 * self._fee_rate(market.platform) * sig.entry
+        return qty * per_unit / equity * 100
+
+    def _advisors_block(self, market, sig, df, candle_ts: int, risk_pct: float) -> bool:
         """Chaîne « 1 refus suffit » ; chaque décision est enregistrée avec sa raison."""
         if not self.analysts:
             return False
@@ -504,7 +513,7 @@ class Engine:
             candles=df, equity=self.equity.get(market.platform, 0.0),
             equity_24h=[e["value"] for e in history], open_rows=self._open_rows(),
             trades=self._j("recent_trades", 50) or [],
-            risk_pct=self.settings.risk.risk_per_trade_pct)
+            risk_pct=risk_pct)
         verdicts = run_chain(self.analysts, ctx, live=self.settings.mode == "live")
         for v in verdicts:
             self._j("save_decision", market.symbol, candle_ts, v.advisor, v.blocked,
