@@ -382,6 +382,10 @@ class CapitalCFD(Broker):
             raise OrderUncertain(client_id, "confirmation illisible (dealStatus absent)")
         return conf
 
+    def pending_reference(self, client_id: str) -> str:
+        """dealReference d'un ordre envoyé mais non confirmé (M7 : gardée dans le journal)."""
+        return str(self._pending.get(client_id, {}).get("deal_reference", ""))
+
     def find_order(self, client_id: str, symbol: str) -> dict | None:
         """Ordre recherché par sa référence de transaction (dealReference) si connue."""
         ref = self._pending.get(client_id, {}).get("deal_reference")
@@ -473,14 +477,17 @@ class CapitalCFD(Broker):
 
     def recover_order(self, client_id: str, symbol: str, stop: float, target: float, *,
                       side: str | None = None, qty: float | None = None,
-                      created_ts: float | None = None) -> str | None:
-        """Ordre au statut incertain, recherché à chaque cycle (jamais renvoyé)."""
+                      created_ts: float | None = None, reference: str = "") -> str | None:
+        """Ordre au statut incertain, recherché à chaque cycle (jamais renvoyé). `reference` :
+        dealReference relue dans le journal après un redémarrage (M7)."""
         tracked = next((p for p in self._positions.values() if p.client_id == client_id), None)
         if tracked:
             return tracked.id
         pend = self._pending.setdefault(client_id, {
             "symbol": symbol, "side": side, "qty": qty, "stop": stop, "target": target,
             "sent": created_ts if created_ts is not None else self._clock(), "absences": 0})
+        if reference and not pend.get("deal_reference"):
+            pend["deal_reference"] = reference
         if pend.get("deal_reference"):
             try:
                 return self._from_confirmation(self._confirm(pend["deal_reference"], client_id),

@@ -83,7 +83,12 @@ def open_trade(journal: Journal, broker, platform: str, market: str, side: str, 
     try:
         pid = broker.open_position(market, side, qty, stop, target, client_id)
     except OrderUncertain as exc:
-        _j(journal.save_order, **order, status="uncertain")
+        # M7 : référence de la plateforme (dealReference Capital.com) conservée pour la
+        # recherche, même après un redémarrage
+        ref = None
+        with suppress(Exception):
+            ref = broker.pending_reference(client_id)
+        _j(journal.save_order, **order, status="uncertain", broker_id=ref or None)
         alert("warning", f"{market} : {exc} — recherche à chaque cycle, entrées bloquées")
         return EntryResult("uncertain", None, str(exc))
     except StopNotPlaced as exc:
@@ -136,7 +141,8 @@ def resolve_uncertain(journal: Journal, brokers: dict, now: int, pause_after_s: 
             continue
         try:
             pid = broker.recover_order(cid, market, o["stop"], o["target"], side=o["side"],
-                                       qty=o["qty"], created_ts=o["created_ts"])
+                                       qty=o["qty"], created_ts=o["created_ts"],
+                                       reference=o.get("broker_id") or "")
         except StopNotPlaced as exc:
             _j(journal.save_order, **order, status="filled", broker_id=exc.position_id)
             if exc.closed:

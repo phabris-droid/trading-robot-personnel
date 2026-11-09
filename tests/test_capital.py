@@ -443,3 +443,25 @@ def test_adv10_truncated_positions_answer_never_closes_a_position(mock, cap):
         with pytest.raises(BrokerError):         # refus propre, jamais « fermée »
             cap.ensure_stop(pid)
     assert [p["id"] for p in cap.positions()] == [pid]
+
+
+def test_deal_reference_survives_a_restart(mock, cap, clock, tmp_path):
+    """M7 : la dealReference d'un ordre incertain est gardée dans le journal ; après un
+    redémarrage, l'ordre est retrouvé par elle."""
+    from tradebot.execution.orders import open_trade, resolve_uncertain
+    from tradebot.journal import Journal
+
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    mock.post(host=HOST, path="/api/v1/positions").respond(json={"dealReference": "o_1"})
+    conf = mock.get(host=HOST, path="/api/v1/confirms/o_1").mock(side_effect=[
+        httpx.ConnectError("coupure")] * 3 + [httpx.Response(200, json={
+            "dealStatus": "ACCEPTED", "affectedDeals": [{"dealId": "D1"}], "level": 1.0801,
+            "size": 500, "stopLevel": 1.07})])
+    assert open_trade(journal, cap, "capital", "EURUSD", "buy", 500, 1.07, 1.10,
+                      "EURUSD-1").status == "uncertain"
+    assert journal.orders("uncertain")[0]["broker_id"] == "o_1"
+    restarted = CapitalCFD("cle-api", "moi@exemple.fr", PASSWORD, f"https://{HOST}", 5,
+                           client=httpx.Client(), sleep=lambda s: None,
+                           clock=lambda: clock["now"], symbols=["EURUSD"])
+    report = resolve_uncertain(journal, {"capital": restarted}, int(NOW), 1800)
+    assert report.opened == ["D1"] and conf.call_count == 4
