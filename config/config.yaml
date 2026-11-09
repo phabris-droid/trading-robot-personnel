@@ -110,7 +110,8 @@ analysts:
     loss_streak_market_pause_h: 24
     loss_streak_total: 5
     loss_streak_total_pause_h: 12
-    min_equity: 50
+    min_equity: 50                 # CDC §5 (analyste des risques). Recoupe en partie le
+                                   # drawdown 15 % des disjoncteurs : garde séparée, conservée
     max_equity_drop_24h_pct: 5.0
     forex_weekend_start_utc: "fri 20:00"   # forex fermé du vendredi 20 h…
     forex_weekend_end_utc: "sun 22:15"     # …au dimanche 22 h 15 UTC (or compris, A4)
