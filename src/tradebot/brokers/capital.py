@@ -264,6 +264,13 @@ class CapitalCFD(Broker):
         rules = self.market(symbol).get("dealingRules", {})
         return _num((rules.get("minSizeIncrement") or {}).get("value")) or 0.0
 
+    def _same_size(self, symbol: str, a: float | None, b: float | None) -> bool:
+        """A1 : tailles égales à un demi-pas près (arrondi de la plateforme, flottants)."""
+        if a is None or b is None:
+            return False
+        tol = max(self.size_step(symbol) / 2, 1e-9 * max(abs(a), abs(b), 1.0))
+        return abs(self.round_size(symbol, b) - a) <= tol or abs(a - b) <= tol
+
     def round_size(self, symbol: str, qty: float) -> float:
         """A2 : taille arrondie VERS LE BAS au pas de la plateforme (jamais plus de risque)."""
         step = self.size_step(symbol)
@@ -464,7 +471,7 @@ class CapitalCFD(Broker):
         known = set(self._positions)
         for p in self._open_on_platform():
             if (p["deal_id"] not in known and p["epic"] == symbol and p["side"] == pend["side"]
-                    and p["size"] == pend["qty"] and p["created"]
+                    and self._same_size(symbol, p["size"], pend["qty"]) and p["created"]
                     and _utc_ts(p["created"]) >= pend["sent"] - UNCERTAIN_MATCH_WINDOW_S):
                 pos = CapitalPosition(id=p["deal_id"], symbol=symbol, side=p["side"],
                                       qty=p["size"] or 0.0, entry=p["level"] or 0.0,

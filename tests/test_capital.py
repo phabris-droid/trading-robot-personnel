@@ -364,3 +364,16 @@ def test_size_is_rounded_down_to_the_platform_increment(mock, cap):
     with pytest.raises(OrderRejected):                  # 99 -> 0 : rien n'est envoyé
         cap.open_position("EURUSD", "buy", 99, 1.07, 1.10, "EURUSD-2")
     assert post.call_count == 1
+
+
+def test_uncertain_order_matches_a_position_whose_size_was_rounded(mock, cap):
+    """A1 : la plateforme a arrondi 587,4 en 500 : la position est quand même retrouvée."""
+    market = json.loads(json.dumps(MARKET))
+    market["dealingRules"]["minSizeIncrement"] = {"unit": "POINTS", "value": 100}
+    mock.get(host=HOST, path="/api/v1/markets/EURUSD").respond(json=market)
+    mock.post(host=HOST, path="/api/v1/positions").mock(side_effect=httpx.ReadTimeout("x"))
+    with pytest.raises(OrderUncertain):
+        cap.open_position("EURUSD", "buy", 587.4, 1.07, 1.10, "EURUSD-1")
+    mock.get(host=HOST, path="/api/v1/positions").respond(json={"positions": [
+        _position(deal_id="D9", size=500.0000000001, created="2023-11-14T22:13:25")]})
+    assert cap.recover_order("EURUSD-1", "EURUSD", 1.07, 1.10, side="buy", qty=587.4) == "D9"
