@@ -84,7 +84,12 @@ def fetch_limited(client: httpx.Client, url: str, max_bytes: int, timeout_s: flo
                 url = str(resp.url.join(resp.headers.get("location", "")))
                 continue
             resp.raise_for_status()
-            for chunk in resp.iter_bytes():
+            # audit n° 9 : « identity » n'est qu'une demande ; un corps compressé quand même
+            # est refusé (jamais décompressé : pas de bombe gzip avant le contrôle de taille)
+            encoding = resp.headers.get("content-encoding", "identity").strip().lower()
+            if encoding not in ("", "identity"):
+                raise ValueError(f"flux {url} compressé ({encoding}) refusé")
+            for chunk in resp.iter_raw():
                 size += len(chunk)
                 if size > max_bytes:
                     raise ValueError(f"flux {url} au-delà de {max_bytes} octets")
@@ -108,7 +113,11 @@ def _check_public_https(url: str) -> None:
         ip = ipaddress.ip_address(host)
     except ValueError:
         ip = None
-    if host == "localhost" or host.endswith(".local") or (ip is not None and not ip.is_global):
+    # audit n° 8 : noms trompeurs aussi refusés (point final, nom sans point = nom interne ou
+    # Docker, nombre seul = adresse IP écrite en décimal)
+    internal_name = (host.endswith(".") or "." not in host or host.replace(".", "").isdigit()
+                     or host == "localhost" or host.endswith((".local", ".internal")))
+    if internal_name or (ip is not None and not ip.is_global):
         raise ValueError(f"redirection refusée (adresse interne) : {url}")
 
 

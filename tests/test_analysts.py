@@ -444,3 +444,24 @@ def test_feed_body_is_never_opened_as_a_local_file(tmp_path):
     secret.write_bytes(RSS)                       # un vrai flux, mais sur le disque
     assert parse_feed(str(secret).encode(), "https://x.example/rss", ["hack"]) == []
     assert parse_feed(b"/dev/zero", "https://x.example/rss", ["hack"]) == []
+
+
+@pytest.mark.parametrize("target", ["https://localhost./x", "https://2130706433/x",
+                                    "https://tradebot/api/state", "https://metadata.internal/x"])
+def test_redirect_to_internal_looking_names_is_refused(target):
+    """Audit sécurité n° 8 : point final, nom sans point (Docker), IP en décimal, .internal."""
+    with respx.mock() as m:
+        m.get("https://flux.example/rss").respond(302, headers={"Location": target})
+        with pytest.raises(ValueError, match="redirection refusée"):
+            fetch_limited(httpx.Client(), "https://flux.example/rss", 1024, 20)
+
+
+def test_compressed_body_is_refused_even_if_identity_was_asked():
+    """Audit sécurité n° 9 : jamais de décompression (bombe gzip)."""
+    import gzip
+
+    with respx.mock() as m:
+        m.get("https://flux.example/rss").respond(
+            content=gzip.compress(b"x" * 100_000), headers={"Content-Encoding": "gzip"})
+        with pytest.raises(ValueError, match="compressé"):
+            fetch_limited(httpx.Client(), "https://flux.example/rss", 1024, 20)
