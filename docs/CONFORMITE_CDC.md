@@ -139,7 +139,7 @@ requests ≥ 2.32.4 ; chien de garde et Healthchecks.io.
   dans le job isolé), aucun vrai compte, absence de regard vers l'avenir, injection de pannes
   aléatoires sur les plateformes, le journal et les analystes.
 - ✅ Chaque défaut des audits a son test de non-régression (tableau dans le README).
-- ⚠️ Le CDC annonce « 717 tests (1 ignoré) » : la suite actuelle en compte environ 480. Le
+- ⚠️ Le CDC annonce « 717 tests (1 ignoré) » : la suite actuelle en compte 483. Le
   chiffre du CDC décrit la version précédente du projet ; il n'est pas une exigence
   fonctionnelle, mais l'écart est signalé.
 - 🔧 Non vérifiable hors ligne (jour 1 de la démo) : noms de champs Capital.com, recherche

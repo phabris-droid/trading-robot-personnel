@@ -133,21 +133,16 @@ uv pip compile pyproject.toml --extra dev --python-version 3.12 --python-platfor
 État au 2026-11-09, après l'étape 11 de `PROMPTS_CLAUDE_CODE.md` **et son contre-audit** : les
 trois sous-agents (trading, sécurité, testeur adverse) ont été relancés sur le code corrigé ;
 tous leurs constats critiques et majeurs sont corrigés avec un test de non-régression. CI
-`dev` verte : **473 tests**, run 42645070330, 30 points sur 30.
+`dev` verte : **483 tests**, run 42650630219, 30 points sur 30.
 Conformité au cahier des charges : [docs/CONFORMITE_CDC.md](docs/CONFORMITE_CDC.md) ·
 analyse initiale : [docs/ETAPE_0_ANALYSE.md](docs/ETAPE_0_ANALYSE.md) ·
 déploiement : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md).
 
-### Encore ouvertes (aucune critique ni majeure)
+### Encore ouvertes (aucune critique ni majeure ; décisions : [docs/DECISIONS.md](docs/DECISIONS.md))
 
 | Gravité | # | Fichier | Erreur |
 |---|---|---|---|
 | 🟠 majeure (manuelle) | M3-CD | CD `prod` | Pipeline de mise en ligne jamais exécuté : environnement `production`, secrets du VPS, utilisateur `deploy` à créer (`harden_vps.sh --deploy-key`). |
-| 🟡 moyenne | S11 | `requirements*.lock`, `pyproject.toml` | Verrous sans empreintes `--hash`, `setuptools` de construction non figé (régénération `uv pip compile --generate-hashes` à faire dans la CI). |
-| ⚪ mineure | S7 | `__main__.py` | En démo, mot de passe du tableau de bord sans longueur minimale. |
-| ⚪ mineure | S10 | `analysts/claude_ai.py` | Un titre piégé peut faire relever l'impact de tous les titres d'un même appel (blocage, sens sûr). |
-| ⚪ mineure | S13 | `deploy/Caddyfile` | Pas d'en-tête HSTS ; `/health` joignable depuis Internet via Caddy ; CSP avec `'unsafe-inline'`. |
-| ⚪ mineure | S14 | `deploy/harden_vps.sh` | Pas d'`AllowUsers` : un autre compte avec clé SSH (ex. `ubuntu`) reste ouvert. |
 | ⚪ mineure | M4-b | `brokers/binance.py` | USDT d'un achat incertain non comptés jusqu'à sa résolution ; USDT personnels comptés comme capital (limite CDC §11). |
 | ⚪ mineure | n7 / n8 / n9 | divers | Historique OCO limité à 100 listes ; actions Docker exercées par la seule CD ; liste `rejected` jamais vidée. |
 
@@ -180,6 +175,8 @@ bougies Capital.com (2 min), attente anti-force-brute (1 s doublée jusqu'à 5 m
 | 🟠 | S6 | Sauvegardes et phrase sur le même serveur (décision : clé publique + copie externe) | `6d6d12a` | `test_deploy.py::test_backups_use_the_owner_public_key_…` |
 | 🟡 | S8 / S9 / S12 | Redirections vers des noms internes, corps compressé, déploiement depuis une autre branche | `e3aca46`, `4e0aed8` | `test_analysts.py::test_redirect_to_internal_looking_names_…`, `::test_compressed_body_…` |
 | 🟡 | T10 / T11 / R14 / R16 | Constat de réconciliation non isolé, double absence, écriture d'état hors verrou, configurations absurdes | `9a36860`, `bf2f7a3`, `a833e21` | `test_engine_integration.py::test_audit10_…`, `test_capital.py::test_audit11_…`, `::test_r14_…`, `test_config.py` (R16) |
+| 🟡 | S7 / S10 / S11 / S13 / S14 | Mot de passe court en démo, titre piégé relevant tous les impacts, dépendances sans empreintes, Caddy sans HSTS et `/health` public, SSH ouvert à tout compte | `ef485a8`, `46066a7`, `025ec0c`, `befd071`, `3cef436` | `test_dashboard.py::test_short_password_…`, `test_analysts.py::test_s10_…`, `test_deploy.py::test_every_dependency_…`, `::test_caddy_…`, `::test_ssh_is_limited_…` |
+| — | A2 / A3 / A4 | Décisions bloquantes confirmées : risque par plateforme, disjoncteurs par plateforme, or = forex | `c333128` | `test_engine_integration.py::test_decision_a2_…`, `::test_decision_a3_…`, `::test_decision_a4_…` |
 
 ### 1er passage de l'étape 11 : erreur → statut → commit → test
 
