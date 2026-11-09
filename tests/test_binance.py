@@ -911,3 +911,18 @@ def test_r03_personal_coins_are_never_used_to_protect_or_close(mock, bn):
         bn.ensure_stop("t1")
     assert oco.call_count == 1
     assert all(c.request.url.params["side"] == "BUY" for c in orders.calls)
+
+
+def test_r04_null_executed_qty_on_an_oco_leg_is_a_broker_error(mock, bn):
+    """Testeur adverse R04 : quantité nulle sur une jambe d'OCO : erreur de plateforme (le
+    cycle continue, nouvelle vérification), jamais une exception imprévue."""
+    _open(mock, bn)
+    _orders_route(mock)
+    _close_routes(mock, btc_free="0.00122", oco={
+        "listClientOrderId": "t1-o1", "listOrderStatus": "ALL_DONE", "orders": LEGS})
+    mock.get(host=DEMO, path="/api/v3/order").respond(
+        json={"orderId": 7, "status": "FILLED", "executedQty": None})
+    with pytest.raises(BrokerError):
+        bn.close_position("t1")
+    with pytest.raises(BrokerError):
+        bn.ensure_stop("t1")

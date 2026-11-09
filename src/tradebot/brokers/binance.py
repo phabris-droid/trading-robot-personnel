@@ -514,7 +514,10 @@ class BinanceSpot(Broker):
                                {"symbol": leg["symbol"], "orderId": leg["orderId"]}, signed=True)
             if not active and od.get("status") in ("NEW", "PARTIALLY_FILLED"):
                 return od, None
-            if (_dec(od.get("executedQty")) or Decimal(0)) > 0:
+            executed = _dec(od.get("executedQty"))
+            if executed is None:                 # R04 : quantité illisible -> à revérifier
+                raise OrderUncertain(str(leg.get("orderId")), "jambe d'OCO illisible")
+            if executed > 0:
                 return None, od
         return None, None
 
@@ -543,7 +546,10 @@ class BinanceSpot(Broker):
         for leg in (lst or {}).get("orders", []):
             od = self._request("GET", self.trading_url, EP_ORDER,
                                {"symbol": leg["symbol"], "orderId": leg["orderId"]}, signed=True)
-            if Decimal(str(od.get("executedQty", "0"))) > 0:
+            executed = _dec(od.get("executedQty"))
+            if executed is None:                 # R04 : quantité illisible -> à revérifier
+                raise OrderUncertain(str(leg.get("orderId")), "jambe d'OCO illisible")
+            if executed > 0:
                 return od
         return None
 
