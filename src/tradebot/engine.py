@@ -42,6 +42,7 @@ from tradebot.settings import Settings
 from tradebot.strategies import EXITS, REGISTRY
 
 CANDLES = 300
+CANDLE_S = 3600                    # bougies 1 h (CDC §3)
 
 Alert = Callable[[str, str], None]
 
@@ -72,6 +73,7 @@ class Engine:
         self.paused: dict[str, str] = self.control["markets"]
         self._last_connect: dict[str, float] = {}
         self._equity_saved: dict[str, float] = {}   # A7 : dernier point de capital journalisé
+        self._next_candle: dict[str, int] = {}   # A8 : pas de relecture avant la bougie suivante
         self._seen: dict[str, int] = {}          # dernière bougie vue (copie mémoire)
         self._last_alerts: dict[str, str] = {}
         if threading.current_thread() is threading.main_thread():
@@ -296,10 +298,13 @@ class Engine:
     def _decide(self, market) -> None:
         symbol = market.symbol
         broker = self.brokers[market.platform]
+        if self.now() < self._next_candle.get(symbol, 0):
+            return                                  # A8 : prochaine bougie pas encore close
         df = broker.candles(symbol, limit=CANDLES)
         if df.empty:
             return
         last_ts = int(df["close_ts"].iloc[-1])
+        self._next_candle[symbol] = last_ts + CANDLE_S
         seen = self._j("last_candle_seen", symbol)
         seen = seen if seen is not None else self._seen.get(symbol)
         if seen is not None and last_ts <= seen:

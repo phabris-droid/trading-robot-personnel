@@ -613,3 +613,24 @@ def test_equity_is_journaled_at_most_every_n_minutes(tmp_path):
 
 
 T_EQ = 1_790_000_000.0
+
+
+def test_candles_are_not_refetched_before_the_next_candle_closes(tmp_path):
+    """A8 : une seule lecture des bougies par marché et par heure, pas une par cycle."""
+    broker = FakeBroker(DATA)
+    now = {"t": float(DATA["BTCUSDT"]["close_ts"].iloc[broker.i - 1]) + 60}
+    eng, _, _ = _engine(tmp_path, broker, clock=lambda: now["t"])
+    calls = []
+    real = broker.candles
+    broker.candles = lambda symbol, limit=300: calls.append(symbol) or real(symbol, limit)
+    eng.cycle()
+    first = len(calls)
+    assert first >= 1
+    for _ in range(5):                               # cycles dans la même heure
+        now["t"] += 60
+        eng.cycle()
+    assert len(calls) == first
+    broker.i += 1                                    # nouvelle bougie close
+    now["t"] = float(DATA["BTCUSDT"]["close_ts"].iloc[broker.i - 1]) + 60
+    eng.cycle()
+    assert len(calls) > first
