@@ -75,6 +75,7 @@ class Engine:
         self._last_connect: dict[str, float] = {}
         self._equity_saved: dict[str, float] = {}   # A7 : dernier point de capital journalisé
         self._next_candle: dict[str, int] = {}   # A8 : pas de relecture avant la bougie suivante
+        self._pending_checked = False             # T3 : ordres « pending » d'avant l'arrêt
         self._seen: dict[str, int] = {}          # dernière bougie vue (copie mémoire)
         self._last_alerts: dict[str, str] = {}
         if threading.current_thread() is threading.main_thread():
@@ -239,12 +240,30 @@ class Engine:
     def _resolve_uncertain(self, now: int) -> None:
         if self.journal is None:
             return
+        if not self._pending_checked:
+            self._pending_to_uncertain()
         report = resolve_uncertain(self.journal, self.brokers, now,
                                    self.settings.engine.uncertain_order_pause_minutes * 60,
                                    alert=self.alert)
         self.blocked = set(report.blocked)
         for market in report.paused:
             self._pause(market, "ordre incertain non résolu")
+
+    def _pending_to_uncertain(self) -> None:
+        """Audit trading n° 3 : au démarrage, un ordre encore « pending » vient d'un arrêt
+        brutal (les ordres partent dans le fil du moteur) : il a peut-être été exécuté. Il
+        devient « incertain » : recherché par identifiant client, compté dans les plafonds,
+        jamais renvoyé."""
+        try:
+            pending = self.journal.orders("pending") if self.journal is not None else []
+        except JournalUnavailable:
+            return                              # nouvel essai au prochain cycle
+        for o in pending:
+            self._j("save_order", client_id=o["client_id"], platform=o["platform"],
+                    market=o["market"], side=o["side"], qty=o["qty"], status="uncertain")
+            self.alert("warning", f"{o['market']} : ordre {o['client_id']} interrompu par un "
+                                  "arrêt du robot — recherché comme ordre incertain")
+        self._pending_checked = True
 
     def _open_rows(self) -> list[dict]:
         rows = self._j("open_positions")

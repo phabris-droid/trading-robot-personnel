@@ -771,3 +771,19 @@ def test_audit12_unreadable_engine_state_pauses_entries(tmp_path):
     j.set_state("engine", "[1, 2]")              # JSON valide mais pas un objet
     eng = Engine(SETTINGS, j, connectors={}, alert=lambda *_: None)
     assert eng.status() == "en pause" and "illisible" in eng.control["paused"]
+
+
+def test_audit3_order_left_pending_by_a_crash_is_searched_as_uncertain(tmp_path):
+    """Audit trading n° 3 : achat envoyé puis robot tué avant la fin : au redémarrage,
+    l'ordre est recherché (jamais oublié, jamais renvoyé)."""
+    broker = FakeBroker(DATA)
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    journal.save_order(client_id="BTCUSDT-crash", platform="binance", market="BTCUSDT",
+                       side="buy", qty=0.001, status="pending", stop=90.0, target=120.0,
+                       strategy="breakout")
+    eng, _, alerts = _engine(tmp_path, broker, journal)
+    eng.cycle()
+    assert journal.orders("pending") == []
+    assert [o["client_id"] for o in journal.orders()
+            if o["status"] in ("uncertain", "filled", "rejected")] == ["BTCUSDT-crash"]
+    assert any("interrompu" in m for _, m in alerts)
