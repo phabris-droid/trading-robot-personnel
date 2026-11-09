@@ -631,3 +631,53 @@ def test_real_exit_price_comes_from_the_sell_fill(mock, bn):
     assert bn.exit_price("t1") is None
     bn.close_position("t1")
     assert bn.exit_price("t1") == pytest.approx(60000.0)
+
+
+# --- tests adverses : réponses d'achat illisibles (rapport du testeur, n° 4 à 6) ---------------
+
+def test_adv04_buy_answer_without_execution_fields_is_uncertain(mock, bn):
+    route = mock.post(host=DEMO, path="/api/v3/order").respond(
+        json={"symbol": "BTCUSDT", "orderId": 1, "clientOrderId": "t1", "transactTime": 1})
+    with pytest.raises(OrderUncertain):          # peut-être exécuté : jamais « refusé »
+        bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert route.call_count == 1                 # jamais renvoyé
+
+
+def test_adv05_null_executed_qty_is_uncertain_not_a_crash(mock, bn, tmp_path):
+    from tradebot.execution.orders import open_trade
+    from tradebot.journal import Journal
+
+    journal = Journal(tmp_path / "data" / "tradebot_demo.db", "demo")
+    mock.post(host=DEMO, path="/api/v3/order").respond(json={
+        "orderId": 1, "clientOrderId": "t1", "status": "FILLED", "executedQty": None,
+        "cummulativeQuoteQty": "73.8", "fills": []})
+    result = open_trade(journal, bn, "binance", "BTCUSDT", "buy", 0.00123, 59000.0, 61000.0,
+                        "t1", strategy="breakout")
+    assert result.status == "uncertain"
+    assert [o["client_id"] for o in journal.orders("uncertain")] == ["t1"]
+
+
+def test_adv06_null_commission_still_protects_the_fill(mock, bn):
+    mock.post(host=DEMO, path="/api/v3/order").respond(json={
+        **FILL, "fills": [{"price": "60001.00", "qty": "0.00123", "commission": None,
+                           "commissionAsset": "BTC"}]})
+    oco = mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(
+        json={"listClientOrderId": "t1-o1", "listOrderStatus": "EXECUTING"})
+    pid = bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert oco.call_count == 1                   # stop posé chez la plateforme
+    assert [p["id"] for p in bn.positions()] == [pid]
+
+
+def test_unexpected_exception_after_sending_is_uncertain(tmp_path):
+    """Correctif transversal : toute exception imprévue après l'envoi -> incertain."""
+    from tradebot.execution.orders import open_trade
+    from tradebot.journal import Journal
+
+    class Broken:
+        def open_position(self, *a):
+            raise KeyError("executedQty")
+
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    result = open_trade(journal, Broken(), "binance", "BTCUSDT", "buy", 0.001, 59000.0,
+                        61000.0, "t9")
+    assert result.status == "uncertain" and journal.orders("rejected") == []

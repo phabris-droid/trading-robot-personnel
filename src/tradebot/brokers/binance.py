@@ -108,6 +108,17 @@ BAN_DEFAULT_S = 300.0             # 418 sans durée indiquée : 5 min sans aucun
 BAN_MAX_S = 3 * 24 * 3600.0
 
 
+def _dec(value) -> Decimal | None:
+    """Nombre décimal lu dans une réponse ; None si absent, nul ou illisible."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        d = Decimal(str(value))
+    except (ArithmeticError, ValueError):
+        return None
+    return d if d.is_finite() else None
+
+
 def _avg_price(order: dict | None) -> float:
     """A6 : prix moyen d'un ordre exécuté (cummulativeQuoteQty / executedQty), 0 si illisible."""
     try:
@@ -519,11 +530,17 @@ class BinanceSpot(Broker):
             raise OrderRejected(f"{symbol} : montant sous le minimum ({f.min_notional})")
 
         fill = self._market(symbol, "buy", q, client_id)   # OrderUncertain remonte tel quel
-        executed = Decimal(str(fill.get("executedQty", "0")))
+        executed = _dec(fill.get("executedQty"))
+        if executed is None:
+            # réponse sans quantité lisible (ACK, champ nul, tronquée) : peut-être exécuté
+            raise OrderUncertain(client_id, "réponse d'achat sans quantité exécutée lisible")
         if executed <= 0:
-            raise OrderRejected(f"{symbol} : achat non exécuté ({fill.get('status')})")
-        return self._protect_new(symbol, client_id, executed, fill.get("fills", []),
-                                 Decimal(str(fill.get("cummulativeQuoteQty", "0"))), stop, target)
+            if fill.get("status") in ORDER_FINAL_STATUSES:
+                raise OrderRejected(f"{symbol} : achat non exécuté ({fill.get('status')})")
+            raise OrderUncertain(client_id, f"achat au statut {fill.get('status')}")
+        return self._protect_new(symbol, client_id, executed, fill.get("fills") or [],
+                                 _dec(fill.get("cummulativeQuoteQty")) or Decimal(0), stop,
+                                 target)
 
     def recover_order(self, client_id: str, symbol: str, stop: float, target: float,
                       **_context) -> str | None:
@@ -544,7 +561,9 @@ class BinanceSpot(Broker):
                 return None
             raise OrderUncertain(client_id, "introuvable, nouvelle recherche au prochain cycle")
         self._not_found.pop(client_id, None)
-        executed = Decimal(str(od.get("executedQty", "0")))
+        executed = _dec(od.get("executedQty"))
+        if executed is None:
+            raise OrderUncertain(client_id, "quantité exécutée illisible")
         if executed <= 0:
             if od.get("status") in ORDER_FINAL_STATUSES:
                 return None
@@ -552,14 +571,17 @@ class BinanceSpot(Broker):
         trades = self._request("GET", self.trading_url, EP_MY_TRADES,
                                {"symbol": symbol, "orderId": od["orderId"]}, signed=True)
         return self._protect_new(symbol, client_id, executed, trades,
-                                 Decimal(str(od.get("cummulativeQuoteQty", "0"))), stop, target)
+                                 _dec(od.get("cummulativeQuoteQty")) or Decimal(0), stop, target)
 
     def _protect_new(self, symbol: str, client_id: str, executed: Decimal, fills: list,
                      quote_spent: Decimal, stop: float, target: float) -> str:
         """Achat exécuté : position suivie puis OCO posé aussitôt, sinon vente immédiate."""
         f = self.filters(symbol)
-        fee_base = sum((Decimal(str(x.get("commission", "0"))) for x in fills
-                        if x.get("commissionAsset") == f.base_asset), Decimal(0))
+        # commission illisible = 0 : la position est TOUJOURS suivie et protégée (l'OCO est
+        # de toute façon plafonné au solde libre réel)
+        fee_base = sum((_dec(x.get("commission")) or Decimal(0) for x in fills
+                        if isinstance(x, dict) and x.get("commissionAsset") == f.base_asset),
+                       Decimal(0))
         net = f.floor_qty(float(executed - fee_base))
         entry = float(quote_spent / executed) if quote_spent > 0 else self.quote(symbol)[1]
 

@@ -358,6 +358,8 @@ class Engine:
                             strategy=market.strategy, alert=self.alert)
         if result.status == "opened":
             self.alert("info", f"{symbol} : position ouverte ({sig.reason})")
+        elif result.status == "unprotected":
+            self._pause(symbol, f"position {result.position_id} à vérifier ({result.reason})")
 
     def _engine_checks(self, symbol: str, platform: str) -> str | None:
         rows = self._open_rows()

@@ -100,8 +100,21 @@ def open_trade(journal: Journal, broker, platform: str, market: str, side: str, 
     except (BrokerError, ValueError) as exc:
         _j(journal.save_order, **order, status="rejected")
         return EntryResult("rejected", None, str(exc))
+    except Exception as exc:  # noqa: BLE001
+        # réponse illisible APRÈS l'envoi (champ nul, nombre invalide…) : l'ordre a peut-être
+        # été exécuté -> incertain, recherché à chaque cycle, JAMAIS « refusé » ni renvoyé
+        _j(journal.save_order, **order, status="uncertain")
+        alert("critical", f"{market} : réponse illisible après l'envoi ({type(exc).__name__}) "
+                          "— ordre incertain, recherche à chaque cycle")
+        return EntryResult("uncertain", None, f"{type(exc).__name__}: {exc}")
     _j(journal.save_order, **order, status="filled", broker_id=pid)
-    record_position(journal, platform, broker.position(pid), strategy)
+    try:
+        record_position(journal, platform, broker.position(pid), strategy)
+    except Exception as exc:  # noqa: BLE001
+        # position ouverte chez la plateforme mais refusée par le journal : jamais silencieux
+        alert("critical", f"{market} : position {pid} ouverte mais non journalisée ({exc}) — "
+                          "vérifier à la main")
+        return EntryResult("unprotected", pid, str(exc))
     return EntryResult("opened", pid)
 
 
@@ -136,7 +149,7 @@ def resolve_uncertain(journal: Journal, brokers: dict, now: int, pause_after_s: 
                 report.paused.add(market)
             alert("critical" if not exc.closed else "error", f"{market} : {exc}")
             continue
-        except BrokerError as exc:
+        except Exception as exc:  # noqa: BLE001 - M1 : une réponse illisible n'arrête pas le cycle
             report.blocked.add(market)
             if now - o["created_ts"] >= pause_after_s:
                 report.paused.add(market)
@@ -148,7 +161,12 @@ def resolve_uncertain(journal: Journal, brokers: dict, now: int, pause_after_s: 
             _j(journal.log_event, "info", f"{market} : ordre {cid} jamais exécuté")
             continue
         _j(journal.save_order, **order, status="filled", broker_id=pid)
-        record_position(journal, o["platform"], broker.position(pid), o["strategy"])
+        try:
+            record_position(journal, o["platform"], broker.position(pid), o["strategy"])
+        except Exception as exc:  # noqa: BLE001
+            report.paused.add(market)
+            alert("critical", f"{market} : position {pid} retrouvée mais non journalisée ({exc})")
+            continue
         report.opened.append(pid)
         alert("warning", f"{market} : ordre incertain {cid} retrouvé exécuté, stop posé")
     return report
