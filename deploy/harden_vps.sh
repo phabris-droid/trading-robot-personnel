@@ -19,7 +19,10 @@ SSH_KEY=""
 HTTPS=0
 CONFIRM=0
 APP_USER="trader"
-SSHD_DROPIN="/etc/ssh/sshd_config.d/99-tradebot.conf"
+# sshd garde la PREMIÈRE valeur lue et lit sshd_config.d/*.conf par ordre alphabétique :
+# « 00- » passe avant « 50-cloud-init.conf » (qui active souvent PasswordAuthentication)
+SSHD_DROPIN="/etc/ssh/sshd_config.d/00-tradebot.conf"
+SSHD_DROPIN_OLD="/etc/ssh/sshd_config.d/99-tradebot.conf"   # nom des anciennes versions
 ROLLBACK_UNIT="tradebot-ssh-rollback"
 BACKUP_DIR="/var/backups/tradebot"
 BACKUP_PASS="/root/.tradebot-backup-pass"
@@ -94,6 +97,7 @@ PubkeyAuthentication yes
 MaxAuthTries 3
 EOF
 )"
+rm -f "$SSHD_DROPIN_OLD"
 if [ "$(cat "$SSHD_DROPIN" 2>/dev/null || true)" != "$desired" ]; then
   printf '%s\n' "$desired" > "$SSHD_DROPIN.new"
   mv "$SSHD_DROPIN.new" "$SSHD_DROPIN"

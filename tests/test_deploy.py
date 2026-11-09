@@ -81,3 +81,11 @@ def test_backup_and_audit_cover_both_docker_and_systemd_modes():
     assert "/opt/tradebot/data" in harden and "--network none" in harden
     audit = _read("audit_vps.sh")
     assert "systemctl is-active --quiet tradebot" in audit and "mode de repli" in audit
+
+
+def test_ssh_dropin_is_read_before_cloud_init():
+    """Sécurité n° 5 : sshd retient la première valeur lue ; le fichier du robot doit passer
+    avant 50-cloud-init.conf (ordre alphabétique), l'ancien 99- est supprimé."""
+    text = _read("harden_vps.sh")
+    assert 'SSHD_DROPIN="/etc/ssh/sshd_config.d/00-tradebot.conf"' in text
+    assert 'rm -f "$SSHD_DROPIN_OLD"' in text
