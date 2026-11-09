@@ -758,3 +758,15 @@ def test_uncertain_exit_sell_not_found_twice_is_sent_again(mock, bn):
     bn.close_position("t1")                               # 2e : jamais exécutée -> renvoyée
     assert _params(orders.calls.last)["newClientOrderId"] == "t1-x2"
     assert bn.positions() == []
+
+
+def test_equity_never_counts_an_already_sold_position_twice(mock, bn):
+    """M4 : OCO exécuté mais pas encore constaté : USDT reçus comptés, position non."""
+    bn.baseline = {"BTC": 0.5}                            # 0,5 BTC personnels au départ
+    _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/account").respond(
+        json=_account(btc_free="0.5", usdt="173.2"))     # le BTC du robot a été vendu
+    assert bn.equity() == pytest.approx(173.2)
+    mock.get(host=DEMO, path="/api/v3/account").respond(
+        json=_account(btc_free="0.5", btc_locked="0.00122", usdt="100"))   # encore détenu
+    assert bn.equity() == pytest.approx(100 + 0.00122 * 60000.0)

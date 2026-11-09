@@ -396,10 +396,23 @@ class BinanceSpot(Broker):
         for asset in self.quote_assets():
             free, locked = bal.get(asset, (0.0, 0.0))
             total += free + locked
+        # M4 : une position n'est comptée que pour la quantité réellement détenue par le robot
+        # (solde de l'actif - avoirs personnels de départ). Sinon, entre l'exécution de l'OCO et
+        # sa constatation, la vente serait comptée deux fois (USDT reçus + position) et le plus
+        # haut gonflé fausserait le drawdown.
+        left: dict[str, float] = {}
         for pos in self._positions.values():
-            if pos.status != "closed":
+            if pos.status == "closed":
+                continue
+            asset = self.filters(pos.symbol).base_asset
+            if asset not in left:
+                free, locked = bal.get(asset, (0.0, 0.0))
+                left[asset] = max(0.0, free + locked - float(self.baseline.get(asset, 0.0)))
+            held = min(pos.qty, left[asset])
+            left[asset] -= held
+            if held > 0:
                 bid, _ = self.quote(pos.symbol)
-                total += pos.qty * bid
+                total += held * bid
         return total
 
     # --- ordres -----------------------------------------------------------------------------
