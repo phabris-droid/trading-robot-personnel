@@ -388,3 +388,58 @@ def test_real_exit_level_comes_from_the_close_confirmation(mock, cap):
         "level": 1.0855})
     cap.close_position("D1")
     assert cap.exit_price("D1") == pytest.approx(1.0855)
+
+
+# --- tests adverses : réponses Capital.com illisibles (C3 ; testeur n° 7 à 10) ------------------
+
+def test_adv07_unreadable_confirmation_after_accepted_order_is_uncertain(mock, cap, tmp_path):
+    from tradebot.execution.orders import open_trade
+    from tradebot.journal import Journal
+
+    journal = Journal(tmp_path / "data" / "tradebot_demo.db", "demo")
+    post = mock.post(host=HOST, path="/api/v1/positions").respond(json={"dealReference": "o_1"})
+    mock.get(host=HOST, path="/api/v1/confirms/o_1").respond(
+        404, json={"errorCode": "error.not-found.dealReference"})
+    result = open_trade(journal, cap, "capital", "EURUSD", "buy", 500, 1.07, 1.10,
+                        "EURUSD-1", strategy="mean_reversion")
+    assert result.status == "uncertain"          # l'ordre a été ACCEPTÉ : peut-être exécuté
+    assert [o["client_id"] for o in journal.orders("uncertain")] == ["EURUSD-1"]
+    assert post.call_count == 1
+
+
+def test_adv08_confirmation_without_level_is_still_journaled(mock, cap, tmp_path):
+    from tradebot.execution.orders import open_trade
+    from tradebot.journal import Journal
+
+    journal = Journal(tmp_path / "data" / "tradebot_demo.db", "demo")
+    mock.post(host=HOST, path="/api/v1/positions").respond(json={"dealReference": "o_1"})
+    mock.get(host=HOST, path="/api/v1/confirms/o_1").respond(json={
+        "dealStatus": "ACCEPTED", "affectedDeals": [{"dealId": "D1", "status": "OPENED"}],
+        "size": 500, "stopLevel": 1.07})
+    result = open_trade(journal, cap, "capital", "EURUSD", "buy", 500, 1.07, 1.10,
+                        "EURUSD-1", strategy="mean_reversion")
+    assert result.status == "opened"
+    [row] = journal.open_positions()
+    assert row["id"] == "D1" and row["stop"] < row["entry"] < row["target"]
+
+
+def test_adv09_null_deal_id_is_not_a_position_named_none(mock, cap):
+    mock.post(host=HOST, path="/api/v1/positions").respond(json={"dealReference": "o_1"})
+    mock.get(host=HOST, path="/api/v1/confirms/o_1").respond(json={
+        "dealStatus": "ACCEPTED", "affectedDeals": [{"dealId": None, "status": "OPENED"}],
+        "level": 1.0801, "stopLevel": 1.07})
+    with pytest.raises(OrderUncertain):
+        cap.open_position("EURUSD", "buy", 500, 1.07, 1.10, "EURUSD-1")
+    assert "None" not in {p["id"] for p in cap.positions()}
+
+
+def test_adv10_truncated_positions_answer_never_closes_a_position(mock, cap):
+    pid, _ = _open(mock, cap)
+    mock.get(host=HOST, path="/api/v1/positions").mock(side_effect=[
+        httpx.Response(200, content=b""),        # corps vide (tronqué)
+        httpx.Response(200, json={}),            # clé « positions » absente
+    ])
+    for _ in range(2):
+        with pytest.raises(BrokerError):         # refus propre, jamais « fermée »
+            cap.ensure_stop(pid)
+    assert [p["id"] for p in cap.positions()] == [pid]

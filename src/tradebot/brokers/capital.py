@@ -349,8 +349,18 @@ class CapitalCFD(Broker):
 
     def _open_on_platform(self) -> list[dict]:
         out = []
-        for item in self._request("GET", EP_POSITIONS).get("positions", []):
-            pos, mkt = item.get("position", {}), item.get("market", {})
+        body = self._request("GET", EP_POSITIONS)
+        items = body.get("positions") if isinstance(body, dict) else None
+        if not isinstance(items, list):
+            # ADV10 : corps vide ou tronqué = réponse illisible, JAMAIS « aucune position »
+            # (sinon une position ouverte serait déclarée fermée après 2 absences)
+            raise ApiError("liste des positions illisible (réponse vide ou tronquée)")
+        for item in items:
+            if not isinstance(item, dict):
+                raise ApiError("position illisible dans la liste des positions")
+            pos, mkt = item.get("position") or {}, item.get("market") or {}
+            if not pos.get("dealId"):
+                raise ApiError("position sans dealId dans la liste des positions")
             out.append({"deal_id": str(pos.get("dealId", "")), "epic": mkt.get("epic", ""),
                         "side": str(pos.get("direction", "")).lower(),
                         "size": _num(pos.get("size")), "level": _num(pos.get("level")),
@@ -362,10 +372,15 @@ class CapitalCFD(Broker):
     # --- ordres -----------------------------------------------------------------------------
 
     def _confirm(self, deal_reference: str, client_id: str) -> dict:
+        """C3 / ADV7 : après un envoi ACCEPTÉ, toute erreur de confirmation (404, 4xx, 429,
+        corps illisible) laisse l'ordre INCERTAIN : il est peut-être exécuté."""
         try:
-            return self._request("GET", EP_CONFIRM.format(deal_reference=deal_reference))
-        except BrokerUnavailable as exc:
+            conf = self._request("GET", EP_CONFIRM.format(deal_reference=deal_reference))
+        except BrokerError as exc:
             raise OrderUncertain(client_id, f"confirmation impossible : {exc}") from None
+        if not isinstance(conf, dict) or not conf.get(F_DEAL_STATUS):
+            raise OrderUncertain(client_id, "confirmation illisible (dealStatus absent)")
+        return conf
 
     def find_order(self, client_id: str, symbol: str) -> dict | None:
         """Ordre recherché par sa référence de transaction (dealReference) si connue."""
@@ -393,7 +408,8 @@ class CapitalCFD(Broker):
             raise OrderRejected(f"{symbol} : taille {qty} sous le minimum {self.min_qty(symbol)}")
         self._check_stop_distance(symbol, price, stop)
         self._pending[client_id] = {"symbol": symbol, "side": side, "qty": qty, "stop": stop,
-                                    "target": target, "sent": self._clock(), "absences": 0}
+                                    "target": target, "sent": self._clock(), "absences": 0,
+                                    "price": price}
         resp = self._request("POST", EP_POSITIONS, kind="order", client_id=client_id, body={
             "epic": symbol, "direction": side.upper(), "size": qty, "guaranteedStop": False,
             "stopLevel": stop, "profitLevel": target})
@@ -420,14 +436,17 @@ class CapitalCFD(Broker):
             raise OrderRejected(f"{pend.get('symbol', '')} : ordre refusé par Capital.com "
                                 f"({conf.get('reason', conf.get(F_DEAL_STATUS))})")
         deals = conf.get(F_AFFECTED) or []
-        deal_id = str(deals[0].get("dealId")) if deals else str(conf.get("dealId", ""))
-        if not deal_id:
+        first = deals[0] if deals and isinstance(deals[0], dict) else None
+        raw_id = first.get("dealId") if first is not None else conf.get("dealId")
+        deal_id = "" if raw_id is None else str(raw_id).strip()
+        if not deal_id or deal_id.lower() in ("none", "null"):          # ADV9
             raise OrderUncertain(client_id, "confirmation sans identifiant de position")
         pos = CapitalPosition(
             id=deal_id, symbol=pend.get("symbol", conf.get("epic", "")),
             side=pend.get("side", str(conf.get("direction", "")).lower()),
             qty=_num(conf.get("size")) or pend.get("qty", 0.0),
-            entry=_num(conf.get("level")) or 0.0, stop=pend.get("stop", 0.0),
+            # ADV8 : niveau absent -> prix au moment de l'envoi (jamais 0)
+            entry=_num(conf.get("level")) or pend.get("price", 0.0), stop=pend.get("stop", 0.0),
             target=pend.get("target", 0.0), client_id=client_id,
             deal_reference=pend.get("deal_reference", ""), status="unprotected")
         return self._track_and_protect(pos, attached_stop=_num(conf.get("stopLevel")),
