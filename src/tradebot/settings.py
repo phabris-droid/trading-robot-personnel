@@ -265,6 +265,9 @@ class EngineCfg(Strict):
     emergency_alert_every: int = Field(ge=1, le=100)            # CDC §6 : 5 tentatives
     platform_reconnect_minutes: int = Field(ge=1, le=60)        # CDC §6 : 5
     watchdog_minutes: int = Field(ge=1, le=60)                  # CDC §8 : 5
+    # A7 : capital enregistré au plus toutes les N min (et non à chaque cycle) ; borné à 10 min
+    # car /pret mesure les coupures (<= 15 min) sur ces points
+    equity_save_minutes: int = Field(ge=1, le=10)
 
 
 class Reports(Strict):

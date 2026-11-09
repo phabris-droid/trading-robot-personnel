@@ -71,6 +71,7 @@ class Engine:
         # K8 : marché -> raison, pause jusqu'à /reprendre, conservée au redémarrage
         self.paused: dict[str, str] = self.control["markets"]
         self._last_connect: dict[str, float] = {}
+        self._equity_saved: dict[str, float] = {}   # A7 : dernier point de capital journalisé
         self._seen: dict[str, int] = {}          # dernière bougie vue (copie mémoire)
         self._last_alerts: dict[str, str] = {}
         if threading.current_thread() is threading.main_thread():
@@ -577,5 +578,10 @@ class Engine:
 
     def _save_equity(self, platform: str, value: float) -> None:
         """Capital CONFIRMÉ uniquement (K1) : ce que lisent l'analyste des risques, /pret et la
-        courbe du tableau de bord."""
-        self._j("save_equity", platform, value)
+        courbe du tableau de bord. A7 : au plus un point toutes les equity_save_minutes."""
+        now = self._clock()
+        last = self._equity_saved.get(platform)
+        if last is not None and now - last < self.settings.engine.equity_save_minutes * 60:
+            return
+        self._equity_saved[platform] = now
+        self._j("save_equity", platform, value, int(now))   # horodaté avec l'horloge du moteur

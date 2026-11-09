@@ -597,3 +597,19 @@ def test_closed_trade_uses_the_real_exit_price_when_known(tmp_path):
     assert trade["exit"] == pytest.approx(row["entry"] + 3.0)
     fees = (2 * row["entry"] + 3.0) * row["qty"] * SETTINGS.costs.binance.fee_pct / 100
     assert trade["pnl"] == pytest.approx(3.0 * row["qty"] - fees)
+
+
+def test_equity_is_journaled_at_most_every_n_minutes(tmp_path):
+    """A7 : un point de capital toutes les equity_save_minutes, pas à chaque cycle."""
+    now = {"t": T_EQ}
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    eng = Engine(SETTINGS, journal, connectors={}, alert=lambda *_: None, clock=lambda: now["t"])
+    step = SETTINGS.engine.equity_save_minutes * 60
+    for dt in (0, 30, 60, step - 1, step, step + 30):
+        now["t"] = T_EQ + dt
+        eng._save_equity("binance", 100.0 + dt)
+    points = journal.equity_points(T_EQ - 1)
+    assert [p["value"] for p in points] == [100.0, 100.0 + step]
+
+
+T_EQ = 1_790_000_000.0
