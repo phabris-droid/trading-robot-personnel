@@ -356,3 +356,11 @@ def test_loss_streaks_pause_the_market_24h_and_everything_12h():
     assert "au total" in ra.review(_ctx(trades=mixed)).reason
     assert not ra.review(_ctx(trades=_trades("ETHUSDT", 3, 2) + _trades("SOLUSDT", 2, 2,
                                                                         pnl=1.0))).blocked
+
+
+def test_forex_platforms_defined_once():
+    """D2 : analyste des risques et disjoncteurs partagent la même définition du forex."""
+    from tradebot.analysts import risk_analyst
+    from tradebot.risk import breakers
+
+    assert risk_analyst.FOREX_PLATFORMS is breakers.FOREX_PLATFORMS

@@ -14,8 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from tradebot.analysts.base import Advisor, AdvisorContext, Verdict
-
-FOREX_PLATFORMS = {"capital"}
+from tradebot.risk.breakers import FOREX_PLATFORMS  # D2 : une seule définition
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 WEEK_MIN = 7 * 1440
 
