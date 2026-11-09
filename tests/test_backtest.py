@@ -263,3 +263,21 @@ def test_validation_rejects_non_positive_minimum(tmp_path):
     p.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(ConfigError, match="capital_min_qty.GOLD"):
         load_settings(p, env={})
+
+
+def test_backtest_and_reports_share_the_same_statistics():
+    """D4 : une seule définition du profit factor, de la réussite et du drawdown."""
+    from tradebot import stats
+    from tradebot.backtest import BtResult, BtTrade
+    from tradebot.interfaces.reports import _stats
+
+    pnls = [5.0, -2.0, -1.0, 4.0, -3.0]
+    trades = [BtTrade(i, i + 1, "buy", 1, 1, 1, p, 0, 0, "x") for i, p in enumerate(pnls)]
+    bt = BtResult("BTCUSDT", "breakout", 100.0, trades)
+    rows = [{"pnl": p, "ts": i} for i, p in enumerate(pnls)]
+    rep = _stats(rows)
+    assert round(bt.profit_factor, 2) == rep["profit_factor"] == round(9 / 6, 2)
+    assert round(bt.win_rate, 1) == rep["reussite_pct"] == 40.0
+    assert rep["drawdown"] == round(stats.max_drawdown(pnls)[0], 2) == 3.0
+    assert rep["pertes_de_suite_max"] == stats.max_loss_streak(pnls) == 2
+    assert stats.profit_factor([]) == 0.0 and _stats([])["profit_factor"] is None

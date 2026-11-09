@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from tradebot import stats
 from tradebot.risk.breakers import utc_midnight
 
 DAY = 86_400
@@ -117,22 +118,17 @@ def morning_report(engine, news=None, ai=None) -> str:
 # --- audit hebdomadaire ----------------------------------------------------------------------
 
 def _stats(trades: list[dict]) -> dict:
-    gains = sum(t["pnl"] for t in trades if t["pnl"] > 0)
-    losses = -sum(t["pnl"] for t in trades if t["pnl"] < 0)
-    streak = worst = 0
-    equity = peak = drawdown = 0.0
-    for t in sorted(trades, key=lambda t: t["ts"]):
-        streak = streak + 1 if t["pnl"] < 0 else 0
-        worst = max(worst, streak)
-        equity += t["pnl"]
-        peak = max(peak, equity)
-        drawdown = max(drawdown, peak - equity)
-    return {"trades": len(trades),
-            "reussite_pct": round(sum(t["pnl"] > 0 for t in trades) / len(trades) * 100, 1)
-            if trades else None,
-            "profit_factor": round(gains / losses, 2) if losses > 0 else None,
-            "pertes_de_suite_max": worst, "drawdown": round(drawdown, 2),
-            "pnl": round(sum(t["pnl"] for t in trades), 2)}
+    """Statistiques d'un lot de trades du journal (calculs communs : tradebot.stats, D4)."""
+    pnls = [t["pnl"] for t in sorted(trades, key=lambda t: t["ts"])]
+    pf = stats.profit_factor(pnls)
+    rate = stats.win_rate(pnls)
+    return {"trades": len(pnls),
+            "reussite_pct": None if rate is None else round(rate, 1),
+            # sans perte, le profit factor n'est pas défini : None (affiché « — »)
+            "profit_factor": round(pf, 2) if any(p < 0 for p in pnls) else None,
+            "pertes_de_suite_max": stats.max_loss_streak(pnls),
+            "drawdown": round(stats.max_drawdown(pnls)[0], 2),
+            "pnl": round(sum(pnls), 2)}
 
 
 def last_audit(audits_dir: str | Path) -> str:

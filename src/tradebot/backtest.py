@@ -15,7 +15,6 @@ Limites connues (CDC §11, P2) : une position à la fois par marché, sans disjo
 from __future__ import annotations
 
 import csv
-import math
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +22,7 @@ from pathlib import Path
 import httpx
 import pandas as pd
 
+from tradebot import stats
 from tradebot.engine import CANDLES
 from tradebot.risk.sizing import position_size
 from tradebot.strategies import EXITS, REGISTRY
@@ -61,26 +61,20 @@ class BtResult:
         return sum(t.pnl for t in self.trades)
 
     @property
+    def pnls(self) -> list[float]:
+        return [t.pnl for t in self.trades]
+
+    @property
     def profit_factor(self) -> float:
-        gains = sum(t.pnl for t in self.trades if t.pnl > 0)
-        losses = -sum(t.pnl for t in self.trades if t.pnl < 0)
-        if losses == 0:
-            return math.inf if gains > 0 else 0.0
-        return gains / losses
+        return stats.profit_factor(self.pnls)          # D4 : définition commune
 
     @property
     def win_rate(self) -> float:
-        return sum(t.pnl > 0 for t in self.trades) / self.n * 100 if self.n else 0.0
+        return stats.win_rate(self.pnls) or 0.0
 
     @property
     def max_drawdown(self) -> float:
-        equity = peak = self.start_equity
-        worst = 0.0
-        for t in self.trades:
-            equity += t.pnl
-            peak = max(peak, equity)
-            worst = max(worst, (peak - equity) / peak * 100 if peak > 0 else 0.0)
-        return worst
+        return stats.max_drawdown(self.pnls, self.start_equity)[1]
 
 
 def verdict(result: BtResult, min_profit_factor: float, min_trades: int) -> str:
