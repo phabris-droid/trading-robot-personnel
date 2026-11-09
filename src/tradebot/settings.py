@@ -373,10 +373,22 @@ class Settings(Strict):
     def _unique_markets(self) -> Settings:
         seen = set()
         for m in self.markets:
-            key = (m.platform, m.symbol)
-            if key in seen:
-                raise ValueError(f"marché en double : {m.platform} {m.symbol}")
-            seen.add(key)
+            # R16 : un symbole par marché, toutes plateformes confondues (pauses, dernière
+            # bougie vue et journal sont indexés par symbole)
+            if m.symbol in seen:
+                raise ValueError(f"marché en double : {m.symbol}")
+            seen.add(m.symbol)
+        return self
+
+    @model_validator(mode="after")
+    def _coherent_timings(self) -> Settings:
+        """R16 : délais incompatibles entre eux = refus au démarrage."""
+        if self.engine.watchdog_minutes * 60 <= self.cycle_seconds:
+            raise ValueError("engine.watchdog_minutes doit dépasser la durée d'un cycle "
+                             "(sinon fausse alerte « robot muet »)")
+        if self.engine.signal_max_age_minutes * 60 <= 120 + self.cycle_seconds:
+            raise ValueError("engine.signal_max_age_minutes trop court : un signal "
+                             "Capital.com (bougie close + 2 min) ne serait jamais tradé")
         return self
 
     @property

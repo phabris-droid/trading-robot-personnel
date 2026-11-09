@@ -86,6 +86,12 @@ BAD = {
     "URL Binance non HTTPS": _set(["platforms", "binance"], "trading_url_live",
                                   "http://api.binance.com"),
     "ping Capital trop rare": _set(["platforms", "capital"], "keepalive_minutes", 15),
+    # testeur adverse R16 : combinaisons absurdes
+    "âge de signal sous la marge Capital": _set(["engine"], "signal_max_age_minutes", 2),
+    "cycle plus long que le chien de garde": lambda r: r.update(cycle_seconds=600),
+    "même symbole sur deux plateformes": lambda r: r["markets"].append(
+        {"platform": "capital", "symbol": "BTCUSDT", "strategy": "breakout",
+         "sides": ["buy", "sell"]}),
     # tests adverses (ADV1-3)
     "URL démo Binance = réel": _set(["platforms", "binance"], "trading_url_demo",
                                     "https://api.binance.com"),
