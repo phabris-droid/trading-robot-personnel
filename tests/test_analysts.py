@@ -434,3 +434,13 @@ def test_frozen_calendar_raises_so_live_blocks():
         watch.review(_ctx(now=late))
     blocked = run_chain([watch], _ctx(now=late), live=True)
     assert any(v.blocked for v in blocked)
+
+
+def test_feed_body_is_never_opened_as_a_local_file(tmp_path):
+    """Audit sécurité n° 2 : un corps de flux égal à un chemin local n'est jamais ouvert."""
+    from tradebot.analysts.news_watch import parse_feed
+
+    secret = tmp_path / "secret.xml"
+    secret.write_bytes(RSS)                       # un vrai flux, mais sur le disque
+    assert parse_feed(str(secret).encode(), "https://x.example/rss", ["hack"]) == []
+    assert parse_feed(b"/dev/zero", "https://x.example/rss", ["hack"]) == []

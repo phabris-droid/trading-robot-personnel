@@ -16,6 +16,7 @@ jamais l'abaisser, et ne peut jamais lever un blocage d'actualité.
 from __future__ import annotations
 
 import calendar as _cal
+import io
 import ipaddress
 import json
 import threading
@@ -117,7 +118,9 @@ def classify(title: str, keywords: list[str]) -> str:
 
 
 def parse_feed(raw: bytes, url: str, keywords: list[str]) -> list[NewsItem]:
-    parsed = feedparser.parse(raw)
+    # sécurité : un objet fichier, jamais des octets bruts (feedparser essaie d'ouvrir une
+    # chaîne ou des octets comme un CHEMIN local : un corps « /dev/zero » figerait le robot)
+    parsed = feedparser.parse(io.BytesIO(raw))
     out = []
     for entry in parsed.entries[:MAX_ITEMS_PER_FEED]:
         title = str(entry.get("title", "")).strip()
