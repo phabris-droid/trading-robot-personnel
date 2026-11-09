@@ -26,6 +26,18 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 STATIC = Path(__file__).parent / "static"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 FAILED_LOGIN_INTERVAL_S = 1.0
+# sécurité n° 10 : jamais affiché dans un cadre d'un autre site (clickjacking), aucune
+# ressource externe, réponses jamais mises en cache
+SECURITY_HEADERS = {
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                               "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+                               "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+                               "form-action 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+}
 
 app = FastAPI(title="tradebot", docs_url=None, redoc_url=None, openapi_url=None)
 _basic = HTTPBasic(auto_error=False)
@@ -79,7 +91,16 @@ async def same_origin_only(request: Request, call_next):
         host = request.headers.get("host", "")
         if origin and urlsplit(origin).netloc != host:
             return JSONResponse({"detail": "origine refusée"}, status_code=403)
-    return await call_next(request)
+        # sécurité n° 11 : sans Origin ni Referer, un formulaire d'un autre site pourrait
+        # encore poster (le navigateur renvoie l'authentification Basic). Un formulaire envoie
+        # toujours un Content-Type non JSON : seul le JSON (page du robot) est accepté
+        ctype = request.headers.get("content-type", "")
+        if ctype and not ctype.split(";")[0].strip().lower() == "application/json":
+            return JSONResponse({"detail": "type de contenu refusé"}, status_code=403)
+    response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():       # sécurité n° 10
+        response.headers.setdefault(name, value)
+    return response
 
 
 class _HealthState:

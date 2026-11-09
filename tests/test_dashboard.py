@@ -101,3 +101,28 @@ def test_health_fails_when_engine_is_stuck(health, clock):
     health["last"] = clock["now"] - 301
     r = c.get("/health")
     assert r.status_code == 503 and r.json()["status"] == "bloqué"
+
+
+# --- audit sécurité n° 10 et 11 -------------------------------------------------------------------
+
+def test_security_headers_forbid_framing_and_caching(client):
+    r = client.get("/", auth=GOOD)
+    assert r.headers["X-Frame-Options"] == "DENY"
+    assert "frame-ancestors 'none'" in r.headers["Content-Security-Policy"]
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["Cache-Control"] == "no-store"
+
+
+@pytest.mark.parametrize("ctype", ["application/x-www-form-urlencoded", "multipart/form-data",
+                                   "text/plain"])
+def test_form_posts_without_origin_are_refused(client, ctype):
+    """Formulaire d'un autre site sans Origin ni Referer : jamais accepté."""
+    r = client.post("/api/status", auth=GOOD, content=b"confirmer=1",
+                    headers={"Content-Type": ctype})
+    assert r.status_code == 403
+
+
+def test_json_post_from_the_page_is_accepted(client):
+    r = client.post("/api/status", auth=GOOD, json={},
+                    headers={"Origin": "http://testserver"})
+    assert r.status_code != 403
