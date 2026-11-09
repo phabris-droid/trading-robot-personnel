@@ -364,3 +364,18 @@ def test_forex_platforms_defined_once():
     from tradebot.risk import breakers
 
     assert risk_analyst.FOREX_PLATFORMS is breakers.FOREX_PLATFORMS
+
+
+def test_ai_budget_survives_a_restart(tmp_path):
+    """A3 : le budget IA du jour est relu dans le journal après un redémarrage."""
+    from tradebot.analysts.claude_ai import DailyBudget
+    from tradebot.journal import Journal
+
+    j = Journal(tmp_path / "tradebot_demo.db", "demo")
+    first = DailyBudget(2, lambda: T0, j, "decisions")
+    assert first.take() and first.take() and not first.take()
+    restarted = DailyBudget(2, lambda: T0 + 60, j, "decisions")
+    assert not restarted.take()                          # toujours épuisé le même jour
+    tomorrow = DailyBudget(2, lambda: T0 + 86_400, j, "decisions")
+    assert tomorrow.take()                               # nouveau jour UTC : remis à zéro
+    assert DailyBudget(2, lambda: T0, j, "veille").take()   # budgets séparés

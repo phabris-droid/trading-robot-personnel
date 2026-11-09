@@ -17,6 +17,7 @@ import json
 import re
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from tradebot.analysts.base import Advisor, AdvisorContext, Verdict
@@ -63,9 +64,19 @@ def _json_from(text: str) -> dict:
 
 
 class DailyBudget:
-    def __init__(self, limit: int, clock: Callable[[], float]):
+    """Budget d'appels par jour UTC. A3 : compteur conservé dans le journal (état
+    « ai_budget:<nom> »), un redémarrage ne remet donc pas le budget à zéro."""
+
+    def __init__(self, limit: int, clock: Callable[[], float], journal=None, name: str = ""):
         self.limit, self._clock = limit, clock
+        self._journal, self._key = journal, f"ai_budget:{name}"
         self.day, self.used = "", 0
+        if journal is not None and name:
+            try:
+                saved = json.loads(journal.get_state(self._key) or "{}")
+                self.day, self.used = str(saved.get("day", "")), int(saved.get("used", 0))
+            except Exception:  # noqa: BLE001 - état illisible : on repart du jour courant
+                self.day, self.used = "", 0
 
     def take(self) -> bool:
         today = datetime.fromtimestamp(self._clock(), UTC).strftime("%Y-%m-%d")
@@ -74,6 +85,11 @@ class DailyBudget:
         if self.used >= self.limit:
             return False
         self.used += 1
+        if self._journal is not None and self._key != "ai_budget:":
+            # journal en panne : le compteur en mémoire suffit jusqu'au retour du journal
+            with suppress(Exception):
+                self._journal.set_state(self._key, json.dumps({"day": self.day,
+                                                              "used": self.used}))
         return True
 
 
@@ -81,13 +97,14 @@ class ClaudeAdvisor(Advisor):
     name = "ia"
 
     def __init__(self, cfg, api_key: str = "", client=None,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, journal=None):
         self.cfg = cfg
         self.enabled = bool(cfg.enabled and (api_key or client is not None))
         self._key = api_key
         self._client = client
-        self.decisions = DailyBudget(cfg.max_calls_decisions_per_day, clock)   # budgets séparés
-        self.news = DailyBudget(cfg.max_calls_news_per_day, clock)
+        self.decisions = DailyBudget(cfg.max_calls_decisions_per_day, clock, journal,
+                                     "decisions")   # budgets séparés
+        self.news = DailyBudget(cfg.max_calls_news_per_day, clock, journal, "veille")
         self.last_prompt = ""
 
     def __repr__(self) -> str:      # jamais de clé dans les journaux

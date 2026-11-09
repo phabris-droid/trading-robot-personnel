@@ -75,7 +75,7 @@ def main() -> int:
         if notification_filter(level, message):
             telegram.send(f"[{level.upper()}] {message}")
 
-    analysts, news = build_analysts(settings, env)   # IA désactivée sans ANTHROPIC_API_KEY
+    analysts, news = build_analysts(settings, env, journal=journal)   # IA off sans clé
     ai = next((a for a in analysts if isinstance(a, ClaudeAdvisor)), None)
     engine = Engine(settings, journal, connectors=_connectors(settings, journal, env),
                     alert=alert, analysts=analysts, news=news)

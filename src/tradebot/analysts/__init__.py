@@ -13,9 +13,10 @@ from tradebot.analysts.risk_analyst import RiskAnalyst
 
 
 def build_analysts(settings, env: dict, clock: Callable[[], float] = time.time, http=None,
-                   ai_client=None) -> tuple[list[Advisor], NewsCache]:
+                   ai_client=None, journal=None) -> tuple[list[Advisor], NewsCache]:
     a = settings.analysts
-    ai = ClaudeAdvisor(a.ai, env.get("ANTHROPIC_API_KEY", ""), client=ai_client, clock=clock)
+    ai = ClaudeAdvisor(a.ai, env.get("ANTHROPIC_API_KEY", ""), client=ai_client, clock=clock,
+                      journal=journal)   # A3 : budgets IA conservés au redémarrage
     cache = NewsCache(a.news_watch, client=http, clock=clock, ai=ai if ai.enabled else None)
     chain: list[Advisor] = [
         NewsWatch(a.news_watch, cache, settings.strategies.atr_period),
