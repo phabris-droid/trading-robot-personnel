@@ -502,8 +502,16 @@ class Engine:
                 self._control_loaded = False
         base: dict[str, Any] = {"emergency": False, "attempts": 0, "paused": "", "markets": {}}
         if saved:
-            with suppress(ValueError):          # état illisible : valeurs par défaut
-                base.update(json.loads(saved))
+            try:
+                loaded = json.loads(saved)
+                if not isinstance(loaded, dict):
+                    raise ValueError("état du moteur : objet JSON attendu")
+                base.update(loaded)
+            except (TypeError, ValueError):
+                # audit trading n° 12 : état illisible = prudence, jamais « aucun arrêt » :
+                # entrées en pause jusqu'à vérification et /reprendre
+                base["paused"] = ("état du moteur illisible dans le journal : vérifier "
+                                  "(arrêt d'urgence en cours ?) puis /reprendre")
         if not isinstance(base["markets"], dict):
             base["markets"] = {}
         return base
@@ -525,6 +533,11 @@ class Engine:
         self.alert("info", "état du moteur relu dans le journal")
 
     def _save_control(self) -> None:
+        if not self._control_loaded:
+            # audit trading n° 2 : état non relu (journal en panne au démarrage) : JAMAIS
+            # écrit, sinon il écraserait l'arrêt d'urgence enregistré au retour du journal ;
+            # les demandes restent en mémoire et sont fusionnées par _reload_control
+            return
         with self._lock:                        # A4 : jamais sérialisé pendant une écriture
             data = json.dumps(self.control)
         self._j("set_state", "engine", data)
@@ -553,14 +566,15 @@ class Engine:
     def resume_entries(self) -> None:
         """/reprendre : refusé tant qu'un arrêt d'urgence n'a pas tout fermé."""
         with self._lock:
-            refused = self.control["emergency"]
+            refused = self.control["emergency"] or not self._control_loaded
             if not refused:
                 self.control["paused"] = ""
                 markets = sorted(self.paused)
                 self.paused.clear()             # K8 : /reprendre lève aussi les pauses par marché
                 self._save_control()
         if refused:
-            self.alert("warning", "Reprise refusée : arrêt d'urgence en cours")
+            self.alert("warning", "Reprise refusée : arrêt d'urgence en cours ou état du "
+                                  "moteur pas encore relu dans le journal")
             return
         self.alert("info", "Entrées reprises" + (f" (marchés : {', '.join(markets)})"
                                                  if markets else ""))

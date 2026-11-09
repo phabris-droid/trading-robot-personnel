@@ -745,3 +745,29 @@ def test_stale_signal_is_not_traded(tmp_path):
     late["t"] = float(DATA["BTCUSDT"]["close_ts"].iloc[broker.i - 1]) + 3 * 3600 - 60
     eng._decide(next(m for m in SETTINGS.markets if m.symbol == "BTCUSDT"))
     assert broker.open_calls == []
+
+
+def test_audit2_state_saved_during_outage_never_overwrites_the_emergency_stop(tmp_path):
+    """Audit trading n° 2 : pendant la panne du journal au démarrage, une pause par marché ou
+    un /reprendre ne doivent jamais écraser l'arrêt d'urgence enregistré."""
+    from test_breakers import BrokenJournal
+
+    j = BrokenJournal(tmp_path / "data" / "tradebot_demo.db", "demo")
+    Engine(SETTINGS, j, connectors={}, alert=lambda *_: None,
+           clock=lambda: 1e9).request_emergency_stop("test")
+    j.broken = True
+    eng = Engine(SETTINGS, j, connectors={}, alert=lambda *_: None, clock=lambda: 1e9 + 60)
+    eng._pause("BTCUSDT", "avoir inexpliqué")
+    eng.resume_entries()                         # refusé : état non relu
+    j.broken = False
+    j.flush()                                    # rejeu des écritures en attente
+    eng._reload_control()
+    assert eng.control["emergency"] is True
+    assert eng.paused == {"BTCUSDT": "avoir inexpliqué"}
+
+
+def test_audit12_unreadable_engine_state_pauses_entries(tmp_path):
+    j = Journal(tmp_path / "tradebot_demo.db", "demo")
+    j.set_state("engine", "[1, 2]")              # JSON valide mais pas un objet
+    eng = Engine(SETTINGS, j, connectors={}, alert=lambda *_: None)
+    assert eng.status() == "en pause" and "illisible" in eng.control["paused"]
