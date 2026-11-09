@@ -22,15 +22,18 @@ le moteur applique déjà le plafond de positions et la taille de position.
 """
 from __future__ import annotations
 
+import json
 import signal
 import sys
 import threading
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any
 
 from tradebot.brokers.base import PositionInconsistent
-from tradebot.execution.orders import open_trade, resolve_uncertain
+from tradebot.execution.orders import open_trade, record_position, resolve_uncertain
+from tradebot.execution.reconciliation import reconcile
 from tradebot.journal import EVENT_LEVELS, Journal, JournalUnavailable
 from tradebot.risk.breakers import FOREX_PLATFORMS, Breakers, utc_midnight
 from tradebot.risk.sizing import position_size
@@ -64,6 +67,7 @@ class Engine:
         self.blocked: set[str] = set()           # marchés bloqués ce cycle (ordre incertain)
         self.equity: dict[str, float] = {}
         self.breakers = Breakers(settings.risk, journal, clock)   # disjoncteurs (CDC §4)
+        self.control = self._load_control()   # arrêt d'urgence, pause globale (persistants)
         self._last_connect: dict[str, float] = {}
         self._seen: dict[str, int] = {}          # dernière bougie vue (copie mémoire)
         self._last_alerts: dict[str, str] = {}
@@ -135,6 +139,7 @@ class Engine:
         self._resolve_uncertain(now)
         self._manage_positions()
         self._safety_close()
+        self._emergency_close()
         banned = {name for name in self.brokers if self._banned(name, now)}
         for market in self.settings.markets:
             if not market.enabled or market.platform not in self.brokers:
@@ -288,6 +293,8 @@ class Engine:
             return                                  # première bougie observée : mémorisée
         if symbol in self.paused or symbol in self.blocked or self.journal is None:
             return
+        if self.control["emergency"] or self.control["paused"]:
+            return                                  # pause globale ou arrêt d'urgence
         params = self.settings.strategies.params(market.strategy)
         sig = REGISTRY[market.strategy](df, params, list(market.sides),
                                         self.settings.strategies.atr_period)
@@ -369,29 +376,91 @@ class Engine:
                              max_spread_to_stop=r.max_spread_to_stop, leverage=leverage)
 
     def _reconcile(self) -> None:
-        """La plateforme fait foi (CDC §6) : avoir inexpliqué -> pause de la plateforme ;
-        position ouverte à la main -> signalée, jamais reprise."""
+        """La plateforme fait foi (CDC §6), voir execution/reconciliation.py. Chaque plateforme
+        est isolée : une erreur sur l'une n'empêche pas la réconciliation de l'autre."""
+        rows = self._open_rows()
         for name, broker in self.brokers.items():
-            if hasattr(broker, "manual_positions"):
-                try:
-                    manual = broker.manual_positions()
-                except Exception as exc:  # noqa: BLE001
-                    self.alert("error", f"{name} : réconciliation impossible ({exc})",
-                               key=f"reco:{name}")
-                    continue
-                if manual:
-                    ids = ", ".join(f"{p['epic']} {p['side']} {p['size']}" for p in manual)
-                    self.alert("warning", f"{name} : position(s) ouverte(s) à la main, non "
-                                          f"gérée(s) par le robot : {ids}", key=f"manuel:{name}")
-            if not hasattr(broker, "untracked_balances"):
-                continue
             try:
-                extra = broker.untracked_balances()
+                findings = reconcile(rows, {name: broker})
             except Exception as exc:  # noqa: BLE001
                 self.alert("error", f"{name} : réconciliation impossible ({exc})",
                            key=f"reco:{name}")
                 continue
-            if extra:
-                for m in self.settings.markets:
-                    if m.platform == name:
-                        self._pause(m.symbol, f"avoir inexpliqué {extra} (ordre perdu ?)")
+            for f in findings:
+                if f.action == "pause_platform":
+                    for m in self.settings.markets:
+                        if m.platform == name:
+                            self._pause(m.symbol, f.detail)
+                elif f.action == "pause_market":
+                    self._pause(f.market or name, f.detail)
+                elif f.action == "recorded":
+                    pos = broker.position(f.position_id)
+                    if pos and self.journal is not None:
+                        record_position(self.journal, name, pos)
+                    self.alert("warning", f"{name} {f.market} : {f.detail}")
+                else:                                   # alert | adopted
+                    self.alert("warning", f"{name} {f.market} : {f.detail}",
+                               key=f"reco:{name}:{f.position_id or f.market}:{f.action}")
+
+    # --- arrêt d'urgence, pause et reprise (commandes du propriétaire, étape 8) --------------
+
+    def _load_control(self) -> dict[str, Any]:
+        saved = self._j("get_state", "engine")
+        base: dict[str, Any] = {"emergency": False, "attempts": 0, "paused": ""}
+        if saved:
+            with suppress(ValueError):          # état illisible : valeurs par défaut
+                base.update(json.loads(saved))
+        return base
+
+    def _save_control(self) -> None:
+        self._j("set_state", "engine", json.dumps(self.control))
+
+    def request_emergency_stop(self, reason: str = "demande du propriétaire") -> None:
+        """/urgence + /confirmer : fermer TOUTES les positions, réessayer à chaque cycle
+        jusqu'à ce que tout soit fermé (CDC §6). Les entrées restent ensuite en pause."""
+        self.control.update(emergency=True, attempts=0, paused=f"arrêt d'urgence ({reason})")
+        self._save_control()
+        self.alert("critical", f"ARRÊT D'URGENCE demandé ({reason}) : fermeture de toutes les "
+                               "positions")
+
+    def pause_entries(self, reason: str = "demande du propriétaire") -> None:
+        """/pause : plus aucune nouvelle entrée ; les positions ouvertes restent gérées."""
+        self.control["paused"] = reason
+        self._save_control()
+        self.alert("warning", f"Entrées en pause : {reason}")
+
+    def resume_entries(self) -> None:
+        """/reprendre : refusé tant qu'un arrêt d'urgence n'a pas tout fermé."""
+        if self.control["emergency"]:
+            self.alert("warning", "Reprise refusée : arrêt d'urgence en cours")
+            return
+        self.control["paused"] = ""
+        self._save_control()
+        self.alert("info", "Entrées reprises")
+
+    def _emergency_close(self) -> None:
+        if not self.control["emergency"]:
+            return
+        self.control["attempts"] += 1
+        for row in self._open_rows():
+            broker = self.brokers.get(row["platform"])
+            if broker is None:
+                continue
+            try:
+                broker.close_position(row["id"])
+                self._record_close(row, broker, "arrêt d'urgence")
+            except Exception as exc:  # noqa: BLE001
+                # nouvel essai au prochain cycle (alerte groupée toutes les N tentatives)
+                self.alert("error", f"{row['market']} : fermeture d'urgence impossible ({exc})",
+                           key=f"urgence:{row['id']}")
+        remaining = self._open_rows()
+        if not remaining:
+            self.control.update(emergency=False, paused="arrêt d'urgence terminé : reprendre "
+                                                        "manuellement (/reprendre)")
+            self.alert("critical", f"Arrêt d'urgence terminé en {self.control['attempts']} "
+                                   "tentative(s) : toutes les positions sont fermées")
+        elif self.control["attempts"] % self.settings.engine.emergency_alert_every == 0:
+            self.alert("critical", f"Arrêt d'urgence : {len(remaining)} position(s) encore "
+                                   f"ouverte(s) après {self.control['attempts']} tentatives "
+                                   f"({', '.join(r['market'] for r in remaining)})")
+        self._save_control()

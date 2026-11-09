@@ -296,3 +296,108 @@ def test_safety_stop_closes_everything_and_blocks_entries(tmp_path):
     broker.i += 50
     eng.cycle()
     assert broker.open_calls == calls               # aucune nouvelle entrée
+
+
+# --- étape 5 : arrêt d'urgence, pause, réconciliation ----------------------------------------
+
+def _with_positions(tmp_path, n=2, journal=None):
+    broker = FakeBroker(DATA)
+    eng, journal, alerts = _engine(tmp_path, broker, journal)
+    eng.cycle()
+    for i, sym in enumerate(["ETHUSDT", "SOLUSDT"][:n]):
+        pid = f"u{i}"
+        broker._create(pid, sym, "buy", 1.0, 1.0, 1e6)
+        journal.open_position(pid, "binance", sym, "buy", 1.0, broker.pos[pid]["entry"], 1.0,
+                              1e6, client_id=pid)
+    return broker, eng, journal, alerts
+
+
+def test_emergency_stop_retries_every_cycle_and_alerts_every_5_attempts(tmp_path):
+    broker, eng, journal, alerts = _with_positions(tmp_path)
+    real_close = broker.close_position
+    failures = {"left": 10}                       # 2 positions × 5 tentatives échouées
+
+    def flaky_close(pid):
+        if failures["left"] > 0:
+            failures["left"] -= 1
+            raise BrokerUnavailable("plateforme saturée")
+        real_close(pid)
+    broker.close_position = flaky_close
+    eng.request_emergency_stop("test")
+    for _ in range(4):
+        eng.cycle()
+    assert journal.open_positions() != []
+    criticals = [m for lvl, m in alerts if lvl == "critical" and "encore ouverte" in m]
+    assert criticals == []
+    eng.cycle()                                    # 5e tentative : alerte groupée
+    assert any("après 5 tentatives" in m for lvl, m in alerts if lvl == "critical")
+    for _ in range(3):
+        eng.cycle()
+    assert journal.open_positions() == []
+    assert all(p["closed"] for p in broker.pos.values())
+    assert eng.control["emergency"] is False and "terminé" in eng.control["paused"]
+
+
+def test_emergency_blocks_entries_and_resume_until_everything_is_closed(tmp_path):
+    broker, eng, journal, alerts = _with_positions(tmp_path)
+    broker.close_position = lambda pid: (_ for _ in ()).throw(BrokerUnavailable("coupure"))
+    eng.request_emergency_stop()
+    eng.resume_entries()
+    assert eng.control["emergency"] is True                 # reprise refusée
+    calls = list(broker.open_calls)
+    broker.i += 50
+    eng.cycle()
+    assert broker.open_calls == calls                       # aucune entrée
+
+
+def test_emergency_state_survives_a_restart(tmp_path):
+    broker, eng, journal, _ = _with_positions(tmp_path)
+    broker.close_position = lambda pid: (_ for _ in ()).throw(BrokerUnavailable("coupure"))
+    eng.request_emergency_stop()
+    eng.cycle()
+    restarted, _, _ = _engine(tmp_path, broker, journal)
+    assert restarted.control["emergency"] is True
+
+
+def test_pause_and_resume_entries(tmp_path):
+    broker = FakeBroker(DATA)
+    eng, _, _ = _engine(tmp_path, broker)
+    eng.cycle()
+    eng.pause_entries("vacances")
+    calls = list(broker.open_calls)
+    broker.i += 100
+    eng.cycle()
+    assert broker.open_calls == calls
+    eng.resume_entries()
+    assert eng.control["paused"] == ""
+
+
+def test_emergency_closes_everything_despite_random_failures(tmp_path):
+    """Simulation de pannes (étape 5) : pannes aléatoires sur le broker ET le journal ;
+    l'arrêt d'urgence finit toujours par tout fermer."""
+    broker = FakeBroker(DATA, fault_rate=0.3, seed=7)
+    journal = FlakyJournal(tmp_path / "tradebot_demo.db", "demo")
+    eng, _, _ = _engine(tmp_path, broker, journal)
+    eng.cycle()
+    for i, sym in enumerate(["BTCUSDT", "ETHUSDT", "SOLUSDT"]):
+        broker._create(f"r{i}", sym, "buy", 1.0, 1.0, 1e6)
+        journal.open_position(f"r{i}", "binance", sym, "buy", 1.0, broker.pos[f"r{i}"]["entry"],
+                              1.0, 1e6, client_id=f"r{i}")
+    journal.rate = 0.2
+    eng.request_emergency_stop("simulation de pannes")
+    for _ in range(60):
+        eng.cycle()
+        if not eng.control["emergency"]:
+            break
+    assert eng.control["emergency"] is False
+    assert all(p["closed"] for p in broker.pos.values())
+
+
+def test_reconciliation_records_a_position_lost_by_the_journal(tmp_path):
+    broker = FakeBroker(DATA)
+    eng, journal, alerts = _engine(tmp_path, broker)
+    eng.cycle()
+    broker._create("perdu", "SOLUSDT", "buy", 1.0, 1.0, 1e6)   # écriture journal perdue
+    eng._reconcile()
+    assert [p["id"] for p in journal.open_positions()] == ["perdu"]
+    assert any("rattrapée" in m for _, m in alerts)

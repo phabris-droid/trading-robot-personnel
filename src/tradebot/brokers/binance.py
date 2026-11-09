@@ -71,6 +71,7 @@ OCO_ACTIVE = {"EXECUTING"}        # listOrderStatus d'un OCO encore en place
 ORDER_FINAL_STATUSES = {"REJECTED", "EXPIRED", "CANCELED", "EXPIRED_IN_MATCH"}
 CLIENT_ID_MAX = 28                # Binance accepte 36 : suffixes « -oNNa » réservés
 HOUR_MS = 3_600_000
+NOT_FOUND_TO_GIVE_UP = 2         # recherches consécutives avant « jamais exécuté » (M7)
 
 
 @dataclass(frozen=True)
@@ -171,6 +172,7 @@ class BinanceSpot(Broker):
         self.banned_until = 0.0        # horodatage de fin de bannissement (HTTP 418)
         self._filters: dict[str, SymbolFilters] = {}
         self._positions: dict[str, BinancePosition] = {}
+        self._not_found: dict[str, int] = {}     # ordres incertains introuvables (M7)
         self.baseline: dict[str, float] = dict(baseline or {})
 
     def __repr__(self) -> str:   # jamais de secret dans les journaux
@@ -336,6 +338,24 @@ class BinanceSpot(Broker):
             journal.save_baseline(saved)
         self.baseline = dict(saved)
         return dict(saved)
+
+    def uncovered_positions(self) -> list[str]:
+        """Positions suivies que le solde réel (libre + bloqué) ne couvre plus (CDC §6 : le
+        solde doit couvrir chaque position du journal). Tolérance : 1 % (frais, arrondis)."""
+        by_asset: dict[str, list[BinancePosition]] = {}
+        for pos in self._positions.values():
+            if pos.status != "closed":
+                by_asset.setdefault(self.filters(pos.symbol).base_asset, []).append(pos)
+        if not by_asset:
+            return []
+        bal = self.balances()
+        out: list[str] = []
+        for asset, plist in by_asset.items():
+            free, locked = bal.get(asset, (0.0, 0.0))
+            need = sum((Decimal(str(p.qty)) for p in plist), Decimal(0))
+            if Decimal(str(free + locked)) < need * Decimal("0.99"):
+                out.extend(p.id for p in plist)
+        return out
 
     def untracked_balances(self) -> dict[str, float]:
         """Avoirs inexpliqués (ni personnels au départ, ni positions suivies) : signe d'un
@@ -523,7 +543,14 @@ class BinanceSpot(Broker):
             return client_id
         od = self.find_order(client_id, symbol)
         if od is None:
-            return None
+            # introuvable : non exécuté seulement après 2 recherches consécutives (M7), au cas
+            # où la plateforme publierait l'ordre avec retard
+            self._not_found[client_id] = self._not_found.get(client_id, 0) + 1
+            if self._not_found[client_id] >= NOT_FOUND_TO_GIVE_UP:
+                self._not_found.pop(client_id, None)
+                return None
+            raise OrderUncertain(client_id, "introuvable, nouvelle recherche au prochain cycle")
+        self._not_found.pop(client_id, None)
         executed = Decimal(str(od.get("executedQty", "0")))
         if executed <= 0:
             if od.get("status") in ORDER_FINAL_STATUSES:

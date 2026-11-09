@@ -82,9 +82,29 @@ def test_uncertain_order_never_executed_is_marked_rejected(mock, journal, bn):
     _send_times_out(mock, journal, bn, [])
     mock.get(host=DEMO, path="/api/v3/order").respond(
         400, json={"code": -2013, "msg": "Order does not exist."})
-    report = resolve_uncertain(journal, {"binance": bn}, now=NOW + 60, pause_after_s=1800)
-    assert not report.blocked and journal.orders()[0]["status"] == "rejected"
+    # M7 : introuvable une première fois -> toujours incertain, marché bloqué
+    first = resolve_uncertain(journal, {"binance": bn}, now=NOW + 60, pause_after_s=1800)
+    assert first.blocked == {"BTCUSDT"} and journal.orders()[0]["status"] == "uncertain"
+    # introuvable au cycle suivant aussi -> jamais exécuté
+    second = resolve_uncertain(journal, {"binance": bn}, now=NOW + 120, pause_after_s=1800)
+    assert not second.blocked and journal.orders()[0]["status"] == "rejected"
     assert journal.open_positions() == []
+
+
+def test_order_published_late_is_still_recovered(mock, journal, bn):
+    """M7 : un ordre absent au premier contrôle puis publié par la plateforme est protégé."""
+    _send_times_out(mock, journal, bn, [])
+    mock.get(host=DEMO, path="/api/v3/order").mock(side_effect=[
+        httpx.Response(400, json={"code": -2013, "msg": "Order does not exist."}),
+        httpx.Response(200, json={"orderId": 42, "status": "FILLED", "executedQty": "0.00123",
+                                  "cummulativeQuoteQty": "73.80123"}),
+    ])
+    mock.get(host=DEMO, path="/api/v3/myTrades").respond(json=[])
+    oco = mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(json={})
+    resolve_uncertain(journal, {"binance": bn}, now=NOW + 60, pause_after_s=1800)
+    report = resolve_uncertain(journal, {"binance": bn}, now=NOW + 120, pause_after_s=1800)
+    assert report.opened == ["t1"] and oco.call_count == 1
+    assert [p["id"] for p in journal.open_positions()] == ["t1"]
 
 
 def test_still_uncertain_blocks_market_then_pauses_after_30_min(mock, journal, bn):
