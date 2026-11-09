@@ -8,12 +8,12 @@ Chaque tâche est une fonction testable ; une tâche qui échoue n'arrête pas l
 """
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 
 import httpx
 
 from tradebot.interfaces import reports
+from tradebot.logs import log
 
 ANNOUNCE_BEFORE_S = 3600
 AUDIT_CANDLES = 1000          # ~6 semaines : 7 jours audités + fenêtre de chauffe des stratégies
@@ -34,7 +34,7 @@ class Jobs:
         try:
             fn()
         except Exception as exc:  # noqa: BLE001
-            print(f"[ERROR] tâche {name} : {type(exc).__name__}: {exc}", file=sys.stderr)
+            log("error", f"tâche {name} : {type(exc).__name__}: {exc}")
 
     def morning(self) -> None:
         self._safe("rapport du matin",
@@ -55,8 +55,7 @@ class Jobs:
                 try:
                     candles[m.symbol] = broker.candles(m.symbol, limit=AUDIT_CANDLES)
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[WARNING] audit : bougies {m.symbol} indisponibles ({exc})",
-                          file=sys.stderr)
+                    log("warning", f"audit : bougies {m.symbol} indisponibles ({exc})")
             summary, _path = supervise(self.engine.journal, settings, self.engine.now(),
                                        candles, settings.storage.audits_dir)
             self.notify(summary)

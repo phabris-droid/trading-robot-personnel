@@ -12,13 +12,13 @@ transport (python-telegram-bot v21, dans un fil dédié avec sa propre boucle as
 from __future__ import annotations
 
 import asyncio
-import sys
 import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
 from tradebot.interfaces import reports
+from tradebot.logs import log
 
 TELEGRAM_LIMIT = 4096
 CONFIRM_WINDOW_S = 60
@@ -139,7 +139,7 @@ class TelegramService:
             if self._bot is None:
                 self._loop.run_until_complete(self._start_polling())
         except Exception as exc:  # noqa: BLE001
-            print(f"[ERROR] Telegram indisponible : {type(exc).__name__}", file=sys.stderr)
+            log("error", f"Telegram indisponible : {type(exc).__name__}")
         finally:
             self._ready.set()
         self._loop.run_forever()
@@ -174,8 +174,7 @@ class TelegramService:
                 asyncio.run_coroutine_threadsafe(
                     self._bot.send_message(chat_id=self.owner, text=part), self._loop)
             except Exception as exc:  # noqa: BLE001
-                print(f"[ERROR] envoi Telegram impossible : {type(exc).__name__}",
-                      file=sys.stderr)
+                log("error", f"envoi Telegram impossible : {type(exc).__name__}")
 
 
 def notification_filter(level: str, message: str) -> bool:

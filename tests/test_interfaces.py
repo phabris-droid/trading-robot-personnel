@@ -302,3 +302,26 @@ def test_missing_validation_explains_how_to_run_it_in_the_container(journal, tmp
     [crit] = [c for c in reports.readiness(journal, S, T0, tmp_path / "absent.json")
               if c.name.startswith("Validation")]
     assert not crit.ok and "docker compose exec tradebot" in crit.value
+
+
+# --- K7 : journalisation JSON (structlog) ----------------------------------------------------------
+
+def test_logs_are_one_json_line_per_event(capsys):
+    from tradebot.logs import log
+
+    log("warning", "BTCUSDT : stop reposé", marche="BTCUSDT")
+    log("niveau-inconnu", "message quand même écrit")
+    lines = capsys.readouterr().err.strip().splitlines()
+    first, second = (json.loads(x) for x in lines[-2:])
+    assert first["event"] == "BTCUSDT : stop reposé" and first["level"] == "warning"
+    assert first["marche"] == "BTCUSDT" and "T" in first["timestamp"]
+    assert second["level"] == "error"
+
+
+def test_engine_default_alert_writes_json(capsys):
+    from tradebot.engine import _stderr_alert
+
+    _stderr_alert("critical", "journal indisponible")
+    data = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
+    assert data == {"event": "journal indisponible", "level": "critical",
+                    "timestamp": data["timestamp"]}

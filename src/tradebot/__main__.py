@@ -4,10 +4,10 @@ Lance le tableau de bord (FastAPI, /health pour Docker) dans un fil séparé,
 puis la boucle du moteur dans le fil principal (qui reçoit SIGTERM).
 """
 import os
-import sys
 import threading
 
 from tradebot.journal import Journal, JournalError
+from tradebot.logs import configure_stdlib, log
 from tradebot.settings import ConfigError, load_env, load_settings
 
 
@@ -29,7 +29,7 @@ def _start_dashboard(port: int, env: dict, mode: str) -> threading.Thread:
 
 def _alert(level: str, message: str) -> None:
     """Alerte avant le démarrage du moteur (Telegram à l'étape 8)."""
-    print(f"[{level.upper()}] {message}", file=sys.stderr, flush=True)
+    log(level, message)
 
 
 def _connectors(settings, journal, env) -> dict:
@@ -57,12 +57,13 @@ def _connectors(settings, journal, env) -> dict:
 
 
 def main() -> int:
+    configure_stdlib()       # K7 : tous les logs en JSON (structlog)
     env = load_env()          # environnement + .env local, sans rien écraser
     try:
         settings = load_settings(env=env)
         journal = Journal.from_settings(settings, on_alert=_alert)
     except (ConfigError, JournalError) as exc:
-        print(f"Démarrage refusé : {exc}", file=sys.stderr)
+        log("critical", f"Démarrage refusé : {exc}")
         return 2
     from tradebot.analysts import build_analysts
     from tradebot.analysts.claude_ai import ClaudeAdvisor
@@ -96,12 +97,12 @@ def main() -> int:
     _start_dashboard(settings.dashboard.port, env, settings.mode)
     started = ("Robot démarré en MODE RÉEL" if settings.mode == "live"
                else "Robot démarré en mode DEMO")
-    print(started, flush=True)
+    log("info", started)
     telegram.send(started)
     engine.run()
     scheduler.shutdown(wait=False)
     journal.close()
-    print("Robot arrêté proprement", flush=True)
+    log("info", "Robot arrêté proprement")
     return 0
 
 

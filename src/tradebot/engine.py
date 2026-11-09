@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import signal
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -36,6 +35,7 @@ from tradebot.analysts.base import AdvisorContext, run_chain
 from tradebot.execution.orders import open_trade, record_position, resolve_uncertain
 from tradebot.execution.reconciliation import reconcile
 from tradebot.journal import EVENT_LEVELS, Journal, JournalUnavailable
+from tradebot.logs import log
 from tradebot.risk.breakers import FOREX_PLATFORMS, Breakers, utc_midnight
 from tradebot.risk.sizing import position_size
 from tradebot.settings import Settings
@@ -47,7 +47,7 @@ Alert = Callable[[str, str], None]
 
 
 def _stderr_alert(level: str, message: str) -> None:
-    print(f"[{level.upper()}] {message}", file=sys.stderr, flush=True)
+    log(level, message)
 
 
 class Engine:
@@ -120,7 +120,7 @@ class Engine:
             except Exception as exc:  # noqa: BLE001
                 msg = f"{type(exc).__name__}: {exc}"
                 if msg != last_error:  # pas de répétition du même message à chaque cycle
-                    print(f"Erreur pendant le cycle : {msg}", file=sys.stderr, flush=True)
+                    log("error", f"Erreur pendant le cycle : {msg}")
                 last_error = msg
             self._sleep(self.settings.cycle_seconds - (time.monotonic() - started))
 
