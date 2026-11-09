@@ -149,6 +149,8 @@ capital de la plateforme ; A3 disjoncteurs par plateforme ; A4 l'or compte comme
 **Étape 5 — faite** (arrêt d'urgence, réconciliation). **Étape 6 — faite** (intégration à deux
 plateformes). **Étape 7 — faite** (équipe d'analyse ; A5 crypto / dollar, A6 4 h, A9 flux JSON
 public, A11 par plateforme).
+**Étape 8 — faite** (Telegram, tableau de bord, rapports, /pret). **Étape 9 — faite** (backtest,
+validation historique, superviseur).
 
 ## 6. Git
 

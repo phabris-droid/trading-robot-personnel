@@ -150,7 +150,6 @@ réglages manuels du déploiement : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md).
 
 | # | Fichier | Erreur |
 |---|---|---|
-| m9 | `engine.py` | Frais estimés (`FEE_RATE = 0,1 %`) codés en dur au lieu d'être dans `config.yaml` (règle 10 de CLAUDE.md). |
 | m10 | `engine.py` | Prix de sortie journalisé = cotation au moment de la fermeture, pas le prix réellement exécuté : P&L approximatif. |
 | m11 | `engine.py` | Les pauses de marché sont gardées en mémoire : un redémarrage les efface (elles sont redétectées au cycle suivant si la cause persiste). |
 

@@ -219,6 +219,29 @@ class Analysts(Strict):
     ai: AiCfg
 
 
+# --- Coûts de trading et validation historique (CDC §3, §4) ---------------------------------
+
+class PlatformCosts(Strict):
+    fee_pct: float = Field(ge=0, le=1)                # frais par côté, % de la valeur
+    spread_pct: float = Field(ge=0, le=1)             # spread moyen, % du prix (backtest)
+    financing_daily_pct: float = Field(ge=0, le=1)    # financement CFD par nuit, % valeur
+
+
+class Costs(Strict):
+    binance: PlatformCosts
+    capital: PlatformCosts
+
+    def of(self, platform: str) -> PlatformCosts:
+        return getattr(self, platform)
+
+
+class ValidationCfg(Strict):
+    months: int = Field(ge=1, le=36)                  # CDC §3 : 12 derniers mois
+    min_profit_factor: float = Field(ge=0.5, le=5)    # CDC §3 : 1,1
+    min_trades: int = Field(ge=1, le=1000)            # CDC §3 : 20
+    warmup_candles: int = Field(ge=50, le=1000)
+
+
 # --- Moteur, rapports, tableau de bord, stockage --------------------------------------------
 
 class EngineCfg(Strict):
@@ -268,6 +291,8 @@ class Settings(Strict):
     risk: Risk
     analysts: Analysts
     engine: EngineCfg
+    costs: Costs
+    validation: ValidationCfg
     reports: Reports
     dashboard: Dashboard
     storage: Storage

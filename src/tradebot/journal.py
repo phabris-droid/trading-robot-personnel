@@ -483,6 +483,13 @@ class Journal:
         rows = self._read("SELECT MIN(ts) AS t FROM equity")
         return rows[0]["t"] if rows and rows[0]["t"] is not None else None
 
+    def blocked_signals(self, since_ts: float) -> list[dict]:
+        """Entrées bloquées par un conseiller, avec leur signal (superviseur, CDC §5)."""
+        return self._read("SELECT d.advisor, d.reason AS block_reason, s.* FROM decisions d "
+                          "JOIN signals s ON s.market = d.market AND s.candle_ts = d.candle_ts "
+                          "WHERE d.blocked = 1 AND s.candle_ts >= ? ORDER BY s.candle_ts",
+                          (int(since_ts),))
+
     def filled_orders_without_position(self) -> list[dict]:
         """Cohérence du journal (/pret) : tout ordre exécuté doit avoir sa position."""
         return self._read("SELECT * FROM orders o WHERE o.status = 'filled' AND NOT EXISTS "

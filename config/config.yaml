@@ -132,6 +132,16 @@ engine:
   platform_reconnect_minutes: 5
   watchdog_minutes: 5              # alerte si aucun cycle depuis 5 min
 
+costs:                             # frais et spread : taille de position, backtest, P&L estimé
+  binance: {fee_pct: 0.1, spread_pct: 0.01, financing_daily_pct: 0.0}    # spot, taker 0,1 %
+  capital: {fee_pct: 0.0, spread_pct: 0.01, financing_daily_pct: 0.02}   # CFD : spread + nuit
+
+validation:                        # scripts/validate_markets.py (CDC §3)
+  months: 12
+  min_profit_factor: 1.1
+  min_trades: 20
+  warmup_candles: 300
+
 reports:
   morning_utc: "07:00"             # format HH:MM, UTC
   audit_day: sun

@@ -270,12 +270,33 @@ class CapitalCFD(Broker):
         data = self._request("GET", EP_PRICES.format(epic=symbol),
                              params={"resolution": RESOLUTION_1H,
                                      "max": min(limit + 1, MAX_CANDLES)})
+        return self._to_frame(data.get("prices", []), limit)
+
+    def history(self, symbol: str, start_ts: float, end_ts: float) -> pd.DataFrame:
+        """Bougies 1 h clôturées entre deux dates, par paquets de 1000 (validation, étape 9)."""
+        prices: list[dict] = []
+        step = MAX_CANDLES * HOUR_S
+        t = int(start_ts)
+        while t < end_ts:
+            to = min(int(end_ts), t + step)
+            fmt = "%Y-%m-%dT%H:%M:%S"
+            data = self._request("GET", EP_PRICES.format(epic=symbol), params={
+                "resolution": RESOLUTION_1H, "max": MAX_CANDLES,
+                "from": datetime.fromtimestamp(t, UTC).strftime(fmt),
+                "to": datetime.fromtimestamp(to, UTC).strftime(fmt)})
+            prices += data.get("prices", [])
+            t = to
+        return self._to_frame(prices, None)
+
+    def _to_frame(self, raw_prices: list[dict], limit: int | None) -> pd.DataFrame:
         now = self._clock()
         rows = []
-        for p in data.get("prices", []):
+        seen: set[int] = set()
+        for p in raw_prices:
             ts = _utc_ts(p["snapshotTimeUTC"])
-            if ts + HOUR_S > now:            # bougie en cours : jamais utilisée
+            if ts + HOUR_S > now or ts in seen:   # bougie en cours ou en double : ignorée
                 continue
+            seen.add(ts)
 
             def mid(field: str, p=p) -> float:
                 q = p[field]
@@ -287,7 +308,8 @@ class CapitalCFD(Broker):
                          "volume": float(p.get("lastTradedVolume") or 0)})
         df = pd.DataFrame(rows, columns=["ts", "close_ts", "open", "high", "low", "close",
                                          "volume"])
-        return df.sort_values("ts").tail(limit).reset_index(drop=True)
+        df = df.sort_values("ts")
+        return (df.tail(limit) if limit else df).reset_index(drop=True)
 
     # --- compte -----------------------------------------------------------------------------
 

@@ -41,7 +41,6 @@ from tradebot.risk.sizing import position_size
 from tradebot.settings import Settings
 from tradebot.strategies import EXITS, REGISTRY
 
-FEE_RATE = 0.001          # frais estimés par côté (Binance spot, taker 0,1 %)
 CANDLES = 300
 
 Alert = Callable[[str, str], None]
@@ -274,7 +273,7 @@ class Engine:
         except Exception:  # noqa: BLE001
             exit_price = row["entry"]
         sign = 1 if row["side"] == "buy" else -1
-        fees = (row["entry"] + exit_price) * row["qty"] * FEE_RATE
+        fees = (row["entry"] + exit_price) * row["qty"] * self._fee_rate(row["platform"])
         pnl = sign * (exit_price - row["entry"]) * row["qty"] - fees
         self._j("close_position", row["id"], exit_price, reason)
         self._j("save_trade", row["id"], row["platform"], row["market"], row["side"],
@@ -377,7 +376,8 @@ class Engine:
                     if market.platform in FOREX_PLATFORMS and hasattr(broker, "leverage")
                     else 1.0)
         r = self.settings.risk
-        return position_size(equity, sig.entry, sig.stop, ask - bid, 2 * FEE_RATE * sig.entry,
+        fee_rt = 2 * self._fee_rate(market.platform) * sig.entry
+        return position_size(equity, sig.entry, sig.stop, ask - bid, fee_rt,
                              risk_pct=r.risk_per_trade_pct, max_pos_pct=r.max_position_pct,
                              min_qty=min_qty, small_account_max_pct=r.small_account_max_risk_pct,
                              max_spread_to_stop=r.max_spread_to_stop, leverage=leverage)
@@ -527,3 +527,10 @@ class Engine:
         if self.control["paused"] or self.paused:
             return "en pause"
         return "actif"
+
+    def _fee_rate(self, platform: str) -> float:
+        """Frais par côté de la plateforme, lus dans config.yaml (costs)."""
+        try:
+            return self.settings.costs.of(platform).fee_pct / 100
+        except AttributeError:
+            return 0.0

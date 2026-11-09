@@ -16,6 +16,7 @@ import httpx
 from tradebot.interfaces import reports
 
 ANNOUNCE_BEFORE_S = 3600
+AUDIT_CANDLES = 1000          # ~6 semaines : 7 jours audités + fenêtre de chauffe des stratégies
 
 
 class Jobs:
@@ -40,9 +41,24 @@ class Jobs:
                    lambda: self.notify(reports.morning_report(self.engine, self.news, self.ai)))
 
     def weekly_audit(self) -> None:
+        """Superviseur (étape 9) : mêmes bougies que le réel pour la comparaison au backtest et
+        le rejeu des entrées bloquées ; une plateforme injoignable n'empêche pas l'audit."""
         def run():
-            summary, _path = reports.weekly_audit(self.engine.journal, self.engine.now(),
-                                                  self.engine.settings.storage.audits_dir)
+            from tradebot.analysts.supervisor import supervise
+
+            settings = self.engine.settings
+            candles = {}
+            for m in settings.markets:
+                broker = self.engine.brokers.get(m.platform)
+                if broker is None:
+                    continue
+                try:
+                    candles[m.symbol] = broker.candles(m.symbol, limit=AUDIT_CANDLES)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[WARNING] audit : bougies {m.symbol} indisponibles ({exc})",
+                          file=sys.stderr)
+            summary, _path = supervise(self.engine.journal, settings, self.engine.now(),
+                                       candles, settings.storage.audits_dir)
             self.notify(summary)
         self._safe("audit", run)
 
