@@ -476,6 +476,44 @@ class BinanceSpot(Broker):
         """Jambe de l'OCO réellement exécutée (quantité > 0), sinon None."""
         return self._filled_leg(self._find_oco(list_client_id) if list_client_id else None)
 
+    def _legs_state(self, lst: dict | None) -> tuple[dict | None, dict | None]:
+        """(jambe encore ouverte d'un OCO terminé, jambe exécutée) — une seule lecture par
+        jambe, arrêt dès qu'une jambe parle."""
+        active = bool(lst) and lst.get("listOrderStatus") in OCO_ACTIVE
+        for leg in (lst or {}).get("orders", []):
+            od = self._request("GET", self.trading_url, EP_ORDER,
+                               {"symbol": leg["symbol"], "orderId": leg["orderId"]}, signed=True)
+            if not active and od.get("status") in ("NEW", "PARTIALLY_FILLED"):
+                return od, None
+            if (_dec(od.get("executedQty")) or Decimal(0)) > 0:
+                return None, od
+        return None, None
+
+    def _finish_triggered_stop(self, pos: BinancePosition, od: dict) -> StopStatus:
+        """C1 : annule l'ordre limite resté ouvert puis vend au marché le reste. La quantité
+        déjà exécutée est lue UNE fois, après l'annulation (jamais soustraite deux fois)."""
+        pos.status = "unprotected"
+        try:
+            self._request("DELETE", self.trading_url, EP_ORDER,
+                          {"symbol": pos.symbol, "orderId": od["orderId"]}, signed=True,
+                          kind="cancel")
+        except ApiError as exc:
+            if exc.code not in CODES_NOT_FOUND:      # déjà exécuté ou annulé : on relit
+                raise
+        final = self._request("GET", self.trading_url, EP_ORDER,
+                              {"symbol": pos.symbol, "orderId": od["orderId"]}, signed=True)
+        executed = _dec(final.get("executedQty")) or Decimal(0)
+        f = self.filters(pos.symbol)
+        remaining = Decimal(str(pos.qty)) - executed
+        if remaining < f.min_qty:
+            self._apply_exit(pos, executed, final)
+            return "closed_by_platform"
+        pos.exit_price = _avg_price(final) or pos.exit_price
+        pos.qty = float(remaining)
+        free, _locked = self.balances().get(f.base_asset, (0.0, 0.0))
+        self._sell(pos, f.floor_qty(min(pos.qty, free)))   # incomplet -> PositionInconsistent
+        return "closed_no_stop"
+
     def _filled_leg(self, lst: dict | None) -> dict | None:
         for leg in (lst or {}).get("orders", []):
             od = self._request("GET", self.trading_url, EP_ORDER,
@@ -608,8 +646,12 @@ class BinanceSpot(Broker):
             pos.oco_id = oco.get("listClientOrderId") or pos.oco_id
             pos.status = "open"
             return "ok"
+        # C1 : OCO terminé mais une jambe encore ouverte = stop déclenché dont la limite a été
+        # sautée (écart de prix) : la position n'est plus protégée -> annuler et vendre
+        live, filled = self._legs_state(oco)
+        if live is not None:
+            return self._finish_triggered_stop(pos, live)
         # « fermée par la plateforme » UNIQUEMENT si une vente exécutée de l'OCO est vue
-        filled = self._filled_leg(oco)
         if filled:
             self._apply_exit(pos, Decimal(str(filled["executedQty"])), filled)  # partiel -> incohérent
             return "closed_by_platform"

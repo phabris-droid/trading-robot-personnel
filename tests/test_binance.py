@@ -681,3 +681,45 @@ def test_unexpected_exception_after_sending_is_uncertain(tmp_path):
     result = open_trade(journal, Broken(), "binance", "BTCUSDT", "buy", 0.001, 59000.0,
                         61000.0, "t9")
     assert result.status == "uncertain" and journal.orders("rejected") == []
+
+
+# --- C1 : stop-limit déclenché dont la limite a été sautée --------------------------------------
+
+def test_triggered_stop_limit_left_unfilled_is_cancelled_and_sold(mock, bn):
+    """Le prix a sauté sous la limite : l'OCO est terminé, l'ordre limite reste ouvert sans
+    exécution. La position n'est plus protégée : annulation puis vente au marché."""
+    _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(
+        json={"listClientOrderId": "t1-o1", "listOrderStatus": "ALL_DONE", "orders": LEGS})
+    mock.get(host=DEMO, path="/api/v3/order").mock(side_effect=[
+        httpx.Response(200, json={"orderId": 7, "status": "NEW", "executedQty": "0"}),
+        httpx.Response(200, json={"orderId": 7, "status": "CANCELED", "executedQty": "0"}),
+    ])
+    cancel = mock.delete(host=DEMO, path="/api/v3/order").respond(json={})
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00122"))
+    orders = _orders_route(mock)
+    assert bn.ensure_stop("t1") == "closed_no_stop"
+    assert cancel.call_count == 1
+    sell = _params(orders.calls.last)
+    assert sell["side"] == "SELL" and sell["quantity"] == "0.00122"
+    assert bn.positions() == []
+
+
+def test_partially_filled_stop_is_counted_once(mock, bn):
+    """Exécution partielle : la quantité exécutée est lue une seule fois (pas de double
+    soustraction), seul le reste est vendu."""
+    _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(
+        json={"listClientOrderId": "t1-o1", "listOrderStatus": "ALL_DONE", "orders": LEGS})
+    mock.get(host=DEMO, path="/api/v3/order").mock(side_effect=[
+        httpx.Response(200, json={"orderId": 7, "status": "PARTIALLY_FILLED",
+                                  "executedQty": "0.00050"}),
+        httpx.Response(200, json={"orderId": 7, "status": "CANCELED", "executedQty": "0.00050",
+                                  "cummulativeQuoteQty": "29.0"}),
+    ])
+    mock.delete(host=DEMO, path="/api/v3/order").respond(json={})
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00072"))
+    orders = _orders_route(mock)
+    assert bn.ensure_stop("t1") == "closed_no_stop"
+    assert _params(orders.calls.last)["quantity"] == "0.00072"      # 0,00122 - 0,00050
+    assert bn.positions() == []
