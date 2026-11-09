@@ -31,6 +31,10 @@ SSHD_DROPIN_OLD="/etc/ssh/sshd_config.d/99-tradebot.conf"   # nom des anciennes 
 ROLLBACK_UNIT="tradebot-ssh-rollback"
 BACKUP_DIR="/var/backups/tradebot"
 BACKUP_PASS="/root/.tradebot-backup-pass"
+BACKUP_PUBKEY="/etc/tradebot/backup-key.asc"          # S6 : clé PUBLIQUE du propriétaire
+BACKUP_REMOTE_FILE="/etc/tradebot/backup-remote"     # S6 : distant rclone
+BACKUP_KEY=""
+BACKUP_REMOTE=""
 BACKUP_BIN="/usr/local/sbin/tradebot-backup"
 
 log() { printf '[harden] %s\n' "$*"; }
@@ -40,6 +44,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --ssh-key) SSH_KEY="${2:-}"; shift 2 ;;
     --deploy-key) DEPLOY_KEY="${2:-}"; shift 2 ;;
+    --backup-key) BACKUP_KEY="${2:-}"; shift 2 ;;
+    --backup-remote) BACKUP_REMOTE="${2:-}"; shift 2 ;;
     --https) HTTPS=1; shift ;;
     --confirm-ssh) CONFIRM=1; shift ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
@@ -213,12 +219,28 @@ timedatectl set-ntp true || true
 
 # --- sauvegarde chiffrée quotidienne du volume tradebot-data, 14 jours ------------------------------------
 install -d -m 700 "$BACKUP_DIR"
-if [ ! -s "$BACKUP_PASS" ]; then
+install -d -m 755 /etc/tradebot
+# S6 : chiffrement par la clé GPG PUBLIQUE du propriétaire (--backup-key) : le serveur ne peut
+# plus relire ses sauvegardes, même s'il est piraté. Sans clé : phrase locale (ancien mode).
+if [ -n "$BACKUP_KEY" ]; then
+  [ -f "$BACKUP_KEY" ] || die "clé GPG publique introuvable : $BACKUP_KEY"
+  grep -q "BEGIN PGP PUBLIC KEY BLOCK" "$BACKUP_KEY" || die "$BACKUP_KEY n'est pas une clé publique"
+  install -m 644 "$BACKUP_KEY" "$BACKUP_PUBKEY"
+  log "sauvegardes chiffrées avec la clé publique du propriétaire (illisibles par le serveur)"
+elif [ ! -s "$BACKUP_PUBKEY" ] && [ ! -s "$BACKUP_PASS" ]; then
   umask 077
   head -c 48 /dev/urandom | base64 > "$BACKUP_PASS"
-  log "phrase de chiffrement créée dans $BACKUP_PASS : la copier HORS du serveur"
+  log "ATTENTION : phrase de chiffrement locale ($BACKUP_PASS) : relancer avec --backup-key"
 fi
-chmod 600 "$BACKUP_PASS"
+[ ! -f "$BACKUP_PASS" ] || chmod 600 "$BACKUP_PASS"
+# S6 : copie quotidienne HORS du serveur (rclone, distant configuré par le propriétaire avec
+# « rclone config » en root : S3, Backblaze, Google Drive…)
+if [ -n "$BACKUP_REMOTE" ]; then
+  apt-get install -y -q rclone
+  printf '%s\n' "$BACKUP_REMOTE" > "$BACKUP_REMOTE_FILE"
+  chmod 600 "$BACKUP_REMOTE_FILE"
+  log "copie externe vers $BACKUP_REMOTE (vérifier « rclone config » en root)"
+fi
 cat > "$BACKUP_BIN" <<EOF
 #!/usr/bin/env bash
 # Sauvegarde chiffrée des données du robot (harden_vps.sh, CDC §8) : volume Docker
@@ -234,9 +256,26 @@ else
   echo "aucune donnée du robot à sauvegarder" >&2
   exit 1
 fi
-archive | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-file "$BACKUP_PASS" \\
-  -o "$BACKUP_DIR/tradebot-\$stamp.tgz.gpg"
+out="$BACKUP_DIR/tradebot-\$stamp.tgz.gpg"
+if [ -s "$BACKUP_PUBKEY" ]; then
+  # S6 : clé publique du propriétaire : le serveur ne peut pas déchiffrer
+  archive | gpg --batch --yes --trust-model always --recipient-file "$BACKUP_PUBKEY" \\
+    --encrypt -o "\$out"
+else
+  archive | gpg --batch --yes --symmetric --cipher-algo AES256 \\
+    --passphrase-file "$BACKUP_PASS" -o "\$out"
+fi
 find "$BACKUP_DIR" -name 'tradebot-*.tgz.gpg' -mtime +14 -delete
+if [ -s "$BACKUP_REMOTE_FILE" ]; then
+  # S6 : copie hors du serveur ; un échec est signalé (journal système) et fait échouer le
+  # service (visible par « systemctl --failed » et par audit_vps.sh)
+  if rclone copy "\$out" "\$(cat "$BACKUP_REMOTE_FILE")"; then
+    date -u +%s > "$BACKUP_DIR/.remote-ok"
+  else
+    logger -p user.err -t tradebot-backup "copie externe impossible"
+    exit 1
+  fi
+fi
 EOF
 chmod 700 "$BACKUP_BIN"
 cat > /etc/systemd/system/tradebot-backup.service <<EOF

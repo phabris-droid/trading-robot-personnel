@@ -101,6 +101,22 @@ fi
 # --- sauvegardes et disque ------------------------------------------------------------------------
 latest=$(find "$BACKUP_DIR" -name 'tradebot-*.tgz.gpg' -mtime -1 2>/dev/null | head -n 1)
 if [ -n "$latest" ]; then pass "sauvegarde chiffrée de moins de 24 h"; else fail "aucune sauvegarde de moins de 24 h"; fi
+# S6 : chiffrement par la clé publique du propriétaire, copie hors du serveur
+if [ -s /etc/tradebot/backup-key.asc ]; then
+  pass "sauvegardes chiffrées par la clé publique du propriétaire"
+else
+  warn "sauvegardes chiffrées par une phrase stockée sur le serveur (harden_vps.sh --backup-key)"
+fi
+if [ -s /etc/tradebot/backup-remote ]; then
+  ok_ts=$(cat "$BACKUP_DIR/.remote-ok" 2>/dev/null || echo 0)
+  if [ $(( $(date -u +%s) - ${ok_ts:-0} )) -lt 93600 ]; then
+    pass "copie externe des sauvegardes de moins de 26 h"
+  else
+    fail "aucune copie externe des sauvegardes depuis plus de 26 h"
+  fi
+else
+  warn "aucune copie des sauvegardes hors du serveur (harden_vps.sh --backup-remote)"
+fi
 old=$(find "$BACKUP_DIR" -name 'tradebot-*.tgz.gpg' -mtime +15 2>/dev/null | head -n 1)
 if [ -z "$old" ]; then pass "rétention 14 jours respectée"; else warn "sauvegardes de plus de 14 jours présentes"; fi
 usage=$(df --output=pcent / | tail -n 1 | tr -dc '0-9')

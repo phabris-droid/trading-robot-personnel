@@ -127,3 +127,13 @@ def test_deploy_key_is_limited_to_a_forced_command_accepting_only_a_digest():
     assert 'usermod -aG docker "$DEPLOY_USER"' not in harden
     cd = (ROOT / ".github" / "workflows" / "cd-prod.yml").read_text(encoding="utf-8")
     assert '"$U@$H" deploy' in cd and "scp " not in cd and "bash -s" not in cd
+
+
+def test_backups_use_the_owner_public_key_and_an_off_site_copy():
+    """Audit sécurité n° 6 (décision : clé publique + copie externe)."""
+    harden = _read("harden_vps.sh")
+    assert "--backup-key" in harden and "--backup-remote" in harden
+    assert "--recipient-file" in harden and "--encrypt" in harden
+    assert "rclone copy" in harden and "logger -p user.err" in harden
+    audit = _read("audit_vps.sh")
+    assert "clé publique du propriétaire" in audit and "copie externe" in audit
