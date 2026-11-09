@@ -664,8 +664,10 @@ def test_adv14_unreadable_journal_at_restart_never_forgets_emergency_stop(tmp_pa
     assert engine.status() == "en pause"         # état inconnu : prudence
     j.broken = False
     engine.cycle()
-    assert engine.control["emergency"] is True
-    assert engine.status() == "arrêt d'urgence"
+    # relu au retour du journal puis exécuté : aucune position, donc terminé aussitôt, et les
+    # entrées restent en pause jusqu'à /reprendre (jamais « actif » par oubli)
+    assert "arrêt d'urgence" in engine.control["paused"]
+    assert engine.status() == "en pause"
 
 
 def test_adv15_a_failing_step_never_blocks_emergency_close_nor_heartbeat(tmp_path):

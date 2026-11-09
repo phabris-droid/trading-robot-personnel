@@ -468,6 +468,9 @@ jobs:
           # aucune requête vers les vraies plateformes depuis la CI
           mkdir -p /tmp/cfg && cp config/config.yaml /tmp/cfg/
           sed -i 's#https://[a-z.-]*binance[a-z.-]*#https://binance.invalid#g; s#https://[a-z.-]*capital[a-z.-]*#https://capital.invalid#g' /tmp/cfg/config.yaml
+          # URL démo distinctes de l'URL réelle (sinon la configuration est refusée, ADV1)
+          sed -i -E 's#(url_demo: https://)#\1demo.#' /tmp/cfg/config.yaml
+          grep -n "url_" /tmp/cfg/config.yaml
           docker run -d --name tradebot --env-file /tmp/secrets.env \
             -v /tmp/cfg:/app/config:ro --read-only --tmpfs /tmp \
             --tmpfs /app/data:uid=10001,gid=10001 -p 127.0.0.1:8080:8080 tradebot:local
