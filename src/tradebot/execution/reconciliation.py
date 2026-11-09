@@ -48,6 +48,12 @@ def _platform(name: str, broker, rows: list[dict]) -> list[Finding]:
             market = by_id.get(pid, {}).get("market", "")
             out.append(Finding("pause_market", name, market,
                                f"position {pid} non couverte par le solde réel", pid))
+    if hasattr(broker, "reappeared_positions"):
+        for p in broker.reappeared_positions():
+            out.append(Finding("pause_market", name, p.get("epic", ""),
+                               f"position {p.get('deal_id')} déclarée fermée mais de nouveau "
+                               "ouverte chez la plateforme : vérifier à la main",
+                               p.get("deal_id")))
     if hasattr(broker, "manual_positions"):
         for p in broker.manual_positions():
             out.append(Finding("alert", name, p.get("epic", ""),

@@ -465,3 +465,19 @@ def test_deal_reference_survives_a_restart(mock, cap, clock, tmp_path):
                            clock=lambda: clock["now"], symbols=["EURUSD"])
     report = resolve_uncertain(journal, {"capital": restarted}, int(NOW), 1800)
     assert report.opened == ["D1"] and conf.call_count == 4
+
+
+def test_position_reappearing_after_being_declared_closed_pauses_the_market(mock, cap):
+    """M8 : jamais ignorée en silence."""
+    from tradebot.execution.reconciliation import reconcile
+
+    _open(mock, cap)
+    route = mock.get(host=HOST, path="/api/v1/positions")
+    route.respond(json={"positions": []})
+    cap.ensure_stop("D1")
+    assert cap.ensure_stop("D1") == "closed_by_platform"
+    route.respond(json={"positions": [_position()]})           # de retour chez Capital.com
+    assert [p["deal_id"] for p in cap.reappeared_positions()] == ["D1"]
+    findings = reconcile([], {"capital": cap})
+    assert any(f.action == "pause_market" and f.position_id == "D1" for f in findings)
+    assert cap.manual_positions() == []                          # pas « ouverte à la main »

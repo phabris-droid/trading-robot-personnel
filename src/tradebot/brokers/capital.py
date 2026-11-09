@@ -573,6 +573,12 @@ class CapitalCFD(Broker):
         """Positions ouvertes à la main : signalées, jamais reprises (CDC §6)."""
         return [p for p in self._open_on_platform() if p["deal_id"] not in self._positions]
 
+    def reappeared_positions(self) -> list[dict]:
+        """M8 : position déclarée fermée (2 absences) mais de nouveau listée par Capital.com :
+        jamais ignorée (le marché est mis en pause, vérification manuelle)."""
+        closed = {pid for pid, p in self._positions.items() if p.status == "closed"}
+        return [p for p in self._open_on_platform() if p["deal_id"] in closed]
+
     def adopt_journal_row(self, row: dict) -> None:
         """Reprend une position ouverte du journal après un redémarrage."""
         self._positions[row["id"]] = CapitalPosition(
