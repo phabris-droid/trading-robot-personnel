@@ -490,7 +490,10 @@ jobs:
           expect "sans identifiants" "$(code http://127.0.0.1:8080/)" 401
           expect "mauvais mot de passe" "$(code --user "$faux1" http://127.0.0.1:8080/)" 401
           expect "essai raté < 1 s après" "$(code --user "$faux2" http://127.0.0.1:8080/)" 429
-          expect "bon mot de passe toujours accepté" "$(code --user "$bon" http://127.0.0.1:8080/)" 200
+          # S1 : pendant l'attente de cette adresse, rien n'est évalué (même le bon mot de passe)
+          expect "bon mot de passe ignoré pendant l'attente" "$(code --user "$bon" http://127.0.0.1:8080/)" 429
+          sleep 3
+          expect "bon mot de passe accepté après l'attente" "$(code --user "$bon" http://127.0.0.1:8080/)" 200
           expect "origine étrangère refusée" \
             "$(code -X POST --user "$bon" -H 'Origin: https://pirate.example' http://127.0.0.1:8080/api/status)" 403
           exit "$fail"

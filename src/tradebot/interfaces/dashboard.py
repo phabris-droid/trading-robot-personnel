@@ -5,7 +5,9 @@ P&L, journal d'événements ; boutons Pause / Reprendre / ARRÊT D'URGENCE avec 
 
 Sécurité (CDC §8) :
 - authentification Basic : identifiant et mot de passe du .env, comparaison à temps constant ;
-- le BON mot de passe passe toujours ; les essais ratés sont limités à 1 par seconde au total ;
+- anti-force-brute PAR ADRESSE IP (décision S1) : après un échec, cette adresse attend 1 s,
+  puis 2, 4… jusqu'à 5 min, et pendant l'attente AUCUN essai n'est évalué (même le bon mot
+  de passe) ; une autre adresse (le propriétaire) n'est jamais bloquée ;
 - sans DASHBOARD_PASSWORD, tout est refusé sauf /health ;
 - requête modifiante venant d'une autre origine : refusée ;
 - /health reste public (contrôle de santé Docker). Aucune ressource externe.
@@ -13,6 +15,8 @@ Sécurité (CDC §8) :
 from __future__ import annotations
 
 import hmac
+import ipaddress
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -26,6 +30,8 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 STATIC = Path(__file__).parent / "static"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 FAILED_LOGIN_INTERVAL_S = 1.0
+MAX_LOCKOUT_S = 300.0             # attente maximale après une série d'échecs (S1)
+MAX_TRACKED_IPS = 10_000
 # sécurité n° 10 : jamais affiché dans un cadre d'un autre site (clickjacking), aucune
 # ressource externe, réponses jamais mises en cache
 SECURITY_HEADERS = {
@@ -49,7 +55,7 @@ class _AuthState:
         self.password = ""
         self.mode = "demo"
         self.clock: Callable[[], float] = time.monotonic
-        self.last_failure = float("-inf")
+        self.failures: dict[str, tuple[int, float]] = {}   # IP -> (échecs, bloquée jusqu'à)
         self.lock = threading.Lock()
 
 
@@ -60,26 +66,50 @@ def configure(user: str, password: str, mode: str = "demo",
               clock: Callable[[], float] = time.monotonic) -> None:
     """Appelé au démarrage avec DASHBOARD_USER / DASHBOARD_PASSWORD (jamais journalisés)."""
     _auth.user, _auth.password, _auth.mode, _auth.clock = user or "", password or "", mode, clock
-    _auth.last_failure = float("-inf")
+    _auth.failures = {}
 
 
-def require_auth(creds: HTTPBasicCredentials | None = Depends(_basic)) -> str:
+def client_ip(request: Request) -> str:
+    """Adresse du client. Derrière le proxy local (Caddy, réseau Docker ou 127.0.0.1), la
+    dernière adresse de X-Forwarded-For (ajoutée par le proxy) ; sinon l'adresse vue."""
+    peer = request.client.host if request.client else ""
+    try:
+        trusted = ipaddress.ip_address(peer).is_private or ipaddress.ip_address(peer).is_loopback
+    except ValueError:
+        trusted = False
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if trusted and forwarded:
+        return forwarded.split(",")[-1].strip() or peer
+    return peer
+
+
+def require_auth(request: Request,
+                 creds: HTTPBasicCredentials | None = Depends(_basic)) -> str:
     challenge = {"WWW-Authenticate": 'Basic realm="tradebot", charset="UTF-8"'}
     if not _auth.password:
         raise HTTPException(503, "tableau de bord désactivé : DASHBOARD_PASSWORD absent")
     if creds is None:
         raise HTTPException(401, "identification requise", headers=challenge)
+    ip = client_ip(request)
+    with _auth.lock:
+        count, until = _auth.failures.get(ip, (0, float("-inf")))
+        wait = until - _auth.clock()
+    if wait > 0:
+        # S1 : pendant l'attente, rien n'est évalué : une rafale d'essais est inutile
+        raise HTTPException(429, f"trop d'essais : réessayer dans {math.ceil(wait)} s",
+                            headers={"Retry-After": str(math.ceil(wait))})
     # comparaison à temps constant des deux champs, toujours évalués
     ok_user = hmac.compare_digest(creds.username.encode(), _auth.user.encode())
     ok_pass = hmac.compare_digest(creds.password.encode(), _auth.password.encode())
     if ok_user and ok_pass:
-        return creds.username                  # le bon mot de passe passe toujours
+        with _auth.lock:
+            _auth.failures.pop(ip, None)
+        return creds.username
     with _auth.lock:
-        now = _auth.clock()
-        if now - _auth.last_failure < FAILED_LOGIN_INTERVAL_S:
-            raise HTTPException(429, "trop d'essais : réessayer dans 1 s",
-                                headers={"Retry-After": "1"})
-        _auth.last_failure = now
+        if len(_auth.failures) > MAX_TRACKED_IPS:        # mémoire bornée
+            _auth.failures.clear()
+        delay = min(FAILED_LOGIN_INTERVAL_S * 2 ** count, MAX_LOCKOUT_S)
+        _auth.failures[ip] = (count + 1, _auth.clock() + delay)
     raise HTTPException(401, "identifiant ou mot de passe incorrect", headers=challenge)
 
 

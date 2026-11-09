@@ -35,17 +35,40 @@ def test_good_credentials_open_the_dashboard(client):
     assert client.get("/api/status", auth=GOOD).json() == {"mode": "demo"}
 
 
-def test_failed_attempts_are_limited_to_one_per_second(client, clock):
+def test_failed_attempts_are_limited_per_address_with_growing_delay(client, clock):
+    """S1 : après un échec, l'adresse attend 1 s, puis 2 s… ; pendant l'attente rien n'est
+    évalué, pas même le bon mot de passe (une rafale d'essais ne sert à rien)."""
     assert client.get("/", auth=("admin", "faux")).status_code == 401
     assert client.get("/", auth=("admin", "faux2")).status_code == 429   # < 1 s plus tard
+    assert client.get("/", auth=GOOD).status_code == 429                 # jamais évalué
     clock["now"] += 1.0
     assert client.get("/", auth=("admin", "faux3")).status_code == 401
+    clock["now"] += 1.0
+    assert client.get("/", auth=GOOD).status_code == 429                 # attente de 2 s
+    clock["now"] += 1.0
+    assert client.get("/", auth=GOOD).status_code == 200                 # puis remis à zéro
+    assert client.get("/", auth=("admin", "faux4")).status_code == 401
 
 
-def test_good_password_always_passes_even_under_attack(client):
+def test_owner_from_another_address_passes_during_an_attack(client, clock):
+    """S1 : l'attaque d'une adresse ne bloque jamais le propriétaire ailleurs."""
+    attacker = TestClient(app, client=("203.0.113.9", 4444))
+    owner = TestClient(app, client=("198.51.100.7", 5555))
     for _ in range(5):
-        client.get("/", auth=("admin", "faux"))                        # rafale d'échecs
-    assert client.get("/", auth=GOOD).status_code == 200
+        attacker.get("/", auth=("admin", "faux"))
+    assert attacker.get("/", auth=GOOD).status_code == 429
+    assert owner.get("/", auth=GOOD).status_code == 200
+
+
+def test_client_address_behind_the_local_proxy_comes_from_x_forwarded_for(client, clock):
+    via_proxy = TestClient(app, client=("172.18.0.1", 4444))
+    direct = TestClient(app, client=("203.0.113.9", 4444))
+    via_proxy.get("/", auth=("admin", "faux"), headers={"X-Forwarded-For": "203.0.113.50"})
+    assert via_proxy.get("/", auth=GOOD,
+                         headers={"X-Forwarded-For": "198.51.100.7"}).status_code == 200
+    # une adresse publique ne peut pas choisir son adresse avec X-Forwarded-For
+    direct.get("/", auth=("admin", "faux"), headers={"X-Forwarded-For": "1.2.3.4"})
+    assert direct.get("/", auth=GOOD, headers={"X-Forwarded-For": "5.6.7.8"}).status_code == 429
 
 
 def test_wrong_user_with_right_password_is_refused(client):
