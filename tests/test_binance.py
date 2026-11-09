@@ -848,3 +848,11 @@ def test_audit7_uncertain_oco_is_searched_never_followed_by_a_market_sell(mock, 
         json={"listClientOrderId": "t1-o1", "listOrderStatus": "EXECUTING"})
     assert bn.ensure_stop(pid) == "ok"                    # trouvé au cycle suivant
     assert all(c.request.url.params["side"] == "BUY" for c in orders.calls)
+
+
+def test_audit13_usdt_gains_are_not_unexplained_balances(mock, bn):
+    """Audit trading n° 13 : sans position ouverte, les USDT gagnés ne mettent pas Binance
+    en pause comme « avoir inexpliqué »."""
+    bn.baseline = {"USDT": 100.0}
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(usdt="130"))
+    assert bn.untracked_balances() == {}

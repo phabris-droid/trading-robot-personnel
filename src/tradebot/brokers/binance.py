@@ -380,7 +380,7 @@ class BinanceSpot(Broker):
                 held[asset] = held.get(asset, Decimal(0)) + Decimal(str(pos.qty))
         out = {}
         for asset, (free, locked) in self.balances().items():
-            if asset in {self.filters(p.symbol).quote_asset for p in self._positions.values()}:
+            if asset in self.quote_assets():     # T13 : gains en USDT = capital, pas un avoir perdu
                 continue
             extra = (Decimal(str(free + locked)) - Decimal(str(self.baseline.get(asset, 0.0)))
                      - held.get(asset, Decimal(0)))
