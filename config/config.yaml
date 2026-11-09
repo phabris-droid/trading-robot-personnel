@@ -77,6 +77,7 @@ analysts:
     calendar_url: https://nfs.faireconomy.media/ff_calendar_thisweek.json   # A9 (non officiel)
     refresh_minutes: 15            # flux et calendrier relus au plus toutes les 15 min
     announcement_impacts: [High]   # annonces « majeures » du calendrier
+    crypto_announcement_currencies: [USD]   # A9 : annonces qui bloquent cryptos et or
     high_impact_keywords:          # titre contenant l'un de ces mots = actualité à fort impact
       - hack
       - exploit

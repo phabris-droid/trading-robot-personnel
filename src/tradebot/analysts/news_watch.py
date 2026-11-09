@@ -49,12 +49,11 @@ class CalendarEvent:
     impact: str            # High | Medium | Low | Holiday
 
 
-def currencies_of(symbol: str) -> set[str]:
-    """Devises dont les annonces touchent le marché (les cryptos cotées en USD : USD)."""
-    if symbol.endswith(("USDT", "USDC", "BUSD")):
-        return {"USD"}
-    if symbol in ("GOLD", "XAUUSD"):
-        return {"USD"}
+def currencies_of(symbol: str, crypto: tuple[str, ...] | list[str] = ("USD",)) -> set[str]:
+    """Devises dont les annonces touchent le marché. Cryptos et or : `crypto` (config A9,
+    crypto_announcement_currencies) ; paire de devises : ses deux devises."""
+    if symbol.endswith(("USDT", "USDC", "BUSD")) or symbol in ("GOLD", "XAUUSD"):
+        return {c.upper() for c in crypto}
     if len(symbol) == 6 and symbol.isalpha():
         return {symbol[:3], symbol[3:]}
     return set()
@@ -208,7 +207,7 @@ class NewsWatch(Advisor):
         if self.cache is None:
             return None
         window = self.cfg.event_window_min * 60
-        currencies = currencies_of(ctx.symbol)
+        currencies = currencies_of(ctx.symbol, self.cfg.crypto_announcement_currencies)
         for ev in self.cache.events:
             if (ev.impact in self.cfg.announcement_impacts and ev.currency in currencies
                     and abs(ev.ts - ctx.now) <= window):

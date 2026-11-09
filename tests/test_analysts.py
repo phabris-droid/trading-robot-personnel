@@ -379,3 +379,13 @@ def test_ai_budget_survives_a_restart(tmp_path):
     tomorrow = DailyBudget(2, lambda: T0 + 86_400, j, "decisions")
     assert tomorrow.take()                               # nouveau jour UTC : remis à zéro
     assert DailyBudget(2, lambda: T0, j, "veille").take()   # budgets séparés
+
+
+def test_crypto_announcement_currencies_come_from_config():
+    """A9 : les devises qui bloquent les cryptos sont lues dans config.yaml."""
+    ecb = CalendarEvent("ECB Rate Decision", "EUR", T0, "High")
+    assert _watch(events=[ecb]).review(_ctx(symbol="BTCUSDT")).blocked is False   # [USD]
+    cfg = A.news_watch.model_copy(update={"crypto_announcement_currencies": ["USD", "EUR"]})
+    cache = NewsCache(cfg, clock=lambda: T0)
+    cache.events = [ecb]
+    assert NewsWatch(cfg, cache).review(_ctx(symbol="BTCUSDT")).blocked is True

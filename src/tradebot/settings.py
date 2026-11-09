@@ -158,6 +158,8 @@ class NewsWatchCfg(Strict):
     refresh_minutes: int = Field(ge=1, le=1440)
     announcement_impacts: list[Literal["High", "Medium", "Low"]] = Field(min_length=1)
     high_impact_keywords: list[str] = Field(min_length=1, max_length=200)
+    # A9 : devises dont les annonces bloquent les cryptos (et l'or), ex. [USD] ou [USD, EUR]
+    crypto_announcement_currencies: list[str] = Field(min_length=1, max_length=10)
 
     @field_validator("feeds")
     @classmethod
