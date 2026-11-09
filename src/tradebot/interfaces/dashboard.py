@@ -32,6 +32,7 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 FAILED_LOGIN_INTERVAL_S = 1.0
 MAX_LOCKOUT_S = 300.0             # attente maximale après une série d'échecs (S1)
 MAX_TRACKED_IPS = 10_000
+MIN_PASSWORD_LEN = 12            # S7 : comme pour le mode réel (CDC §8)
 # sécurité n° 10 : jamais affiché dans un cadre d'un autre site (clickjacking), aucune
 # ressource externe, réponses jamais mises en cache
 SECURITY_HEADERS = {
@@ -88,6 +89,10 @@ def require_auth(request: Request,
     challenge = {"WWW-Authenticate": 'Basic realm="tradebot", charset="UTF-8"'}
     if not _auth.password:
         raise HTTPException(503, "tableau de bord désactivé : DASHBOARD_PASSWORD absent")
+    if len(_auth.password) < MIN_PASSWORD_LEN:
+        # S7 : même en démo, un mot de passe court n'ouvre jamais le tableau de bord
+        raise HTTPException(503, f"tableau de bord désactivé : DASHBOARD_PASSWORD de moins de "
+                                 f"{MIN_PASSWORD_LEN} caractères")
     if creds is None:
         raise HTTPException(401, "identification requise", headers=challenge)
     ip = client_ip(request)

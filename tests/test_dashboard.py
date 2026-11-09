@@ -149,3 +149,13 @@ def test_json_post_from_the_page_is_accepted(client):
     r = client.post("/api/status", auth=GOOD, json={},
                     headers={"Origin": "http://testserver"})
     assert r.status_code != 403
+
+
+def test_short_password_never_opens_the_dashboard_even_in_demo(clock):
+    """Audit sécurité n° 7 : 12 caractères minimum, démo comprise."""
+    configure("admin", "court", mode="demo", clock=lambda: clock["now"])
+    try:
+        r = TestClient(app).get("/", auth=("admin", "court"))
+        assert r.status_code == 503 and "12" in r.json()["detail"]
+    finally:
+        configure("", "")
