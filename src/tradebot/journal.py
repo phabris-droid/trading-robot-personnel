@@ -462,6 +462,22 @@ class Journal:
         self._write(_Op("UPDATE positions SET protection_ref=? WHERE id=?",
                         (ref, position_id), critical=True))
 
+    def count_opened_since(self, ts: int) -> int:
+        """Nombre de positions ouvertes depuis `ts` (toutes plateformes) : 10 trades/jour."""
+        rows = self._read("SELECT COUNT(*) AS n FROM positions WHERE opened_ts >= ?", (int(ts),))
+        return int(rows[0]["n"])
+
+    # -- état persistant (disjoncteurs : arrêt de sécurité, plus haut, début de journée) ----
+
+    def get_state(self, key: str) -> str | None:
+        rows = self._read("SELECT value FROM meta WHERE key=?", (f"state:{key}",))
+        return rows[0]["value"] if rows else None
+
+    def set_state(self, key: str, value: str) -> None:
+        self._write(_Op("INSERT INTO meta (key, value) VALUES (?, ?) "
+                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        (f"state:{key}", value), critical=True))
+
     def open_positions(self) -> list[dict]:
         return self._read("SELECT * FROM positions WHERE closed_ts IS NULL ORDER BY opened_ts")
 

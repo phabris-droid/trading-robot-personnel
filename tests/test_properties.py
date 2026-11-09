@@ -7,7 +7,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pytest
 from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
@@ -54,17 +53,28 @@ def test_spread_wider_than_quarter_of_stop_is_always_refused(equity, entry, stop
         (0.0, "spread trop large")
 
 
-@pytest.mark.xfail(strict=True, reason="C1 (README) : la taille minimale contourne le plafond "
-                                       "de 25 % — correction en attente des décisions A2–A4")
 @FAST
-@given(equity=equities, entry=prices, stop_ratio=st.floats(0.9, 0.999),
-       min_qty=st.floats(0.001, 10))
-@example(equity=100.0, entry=100.0, stop_ratio=0.99, min_qty=0.5)
-def test_minimum_size_never_exceeds_the_25_percent_cap(equity, entry, stop_ratio, min_qty):
-    qty, why = position_size(equity, entry, entry * stop_ratio, 0.0, 0.0, min_qty=min_qty,
-                             **RISK)
-    if why == "ok":
-        assert qty * entry <= equity * RISK["max_pos_pct"] / 100 * (1 + 1e-9)
+@given(equity=equities, entry=prices, stop_ratio=st.floats(0.5, 0.999),
+       spread_ratio=st.floats(0, 0.25), fees=st.floats(0, 1), min_qty=st.floats(0, 1000),
+       leverage=st.sampled_from([1.0, 2.0, 5.0, 10.0, 20.0, 30.0]))
+@example(equity=100.0, entry=100.0, stop_ratio=0.99, spread_ratio=0.0, fees=0.0, min_qty=0.5,
+         leverage=1.0)                                   # ancien défaut C1
+@example(equity=100.0, entry=1.08, stop_ratio=0.99778, spread_ratio=0.0, fees=0.0,
+         min_qty=500.0, leverage=30.0)                   # EURUSD, 100 $, levier 30 (CDC §2)
+def test_size_never_negative_never_above_cap_and_real_risk_never_above_3_percent(
+        equity, entry, stop_ratio, spread_ratio, fees, min_qty, leverage):
+    """C1/C2 corrigés : quel que soit le minimum de la plateforme, la marge ne dépasse jamais
+    25 % du capital et le risque réel jamais 3 % (CDC §4, étape 4)."""
+    stop = entry * stop_ratio
+    spread = (entry - stop) * spread_ratio
+    qty, why = position_size(equity, entry, stop, spread, fees, min_qty=min_qty,
+                             leverage=leverage, **RISK)
+    assert qty >= 0 and math.isfinite(qty)
+    if qty > 0:
+        assert why == "ok" and qty >= min_qty
+        assert qty * entry / leverage <= equity * RISK["max_pos_pct"] / 100 * (1 + 1e-9)
+        real_risk = qty * ((entry - stop) + spread + fees) / equity * 100
+        assert real_risk <= RISK["small_account_max_pct"] * (1 + 1e-9)
 
 
 # --- arrondis Binance --------------------------------------------------------------------------

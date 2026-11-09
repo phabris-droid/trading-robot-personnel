@@ -140,9 +140,12 @@ L'ordre des prompts est bon ; je propose d'avancer deux corrections et le backte
 2.6 (paramètres ajoutés : `engine`, flux RSS, fenêtre forex, délai IA), 2.7, 2.8, 2.9
 (`strategies.params(name)` + `strategies.atr_period` passé aux stratégies).
 
-**Décisions** : A1 tranchée par l'étape 4 de `PROMPTS_CLAUDE_CODE.md` (marge pour Capital.com,
-valeur pour Binance). A2 à A11 restent ouvertes ; elles seront nécessaires à l'étape 4 (A2–A4),
-à l'étape 7 (A5, A6, A9, A11) et aux sorties anticipées (A7).
+**Décisions** (2026-11-09) : A1 marge pour Capital.com / valeur pour Binance ; A2 risque sur le
+capital de la plateforme ; A3 disjoncteurs par plateforme ; A4 l'or compte comme du forex
+(maximum 2 positions et fermeture du week-end) ; A7 RSI < 45 pour la sortie en vente ; A8
+10 trades/jour = ouvertures, jour UTC. Restent ouvertes : A5, A6, A9, A11 (étape 7), A10 (jour 1).
+
+**Étape 3 — faite** (client Capital.com). **Étape 4 — faite** (taille de position, disjoncteurs).
 
 ## 6. Git
 

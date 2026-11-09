@@ -32,6 +32,7 @@ from typing import Any
 from tradebot.brokers.base import PositionInconsistent
 from tradebot.execution.orders import open_trade, resolve_uncertain
 from tradebot.journal import EVENT_LEVELS, Journal, JournalUnavailable
+from tradebot.risk.breakers import FOREX_PLATFORMS, Breakers, utc_midnight
 from tradebot.risk.sizing import position_size
 from tradebot.settings import Settings
 from tradebot.strategies import EXITS, REGISTRY
@@ -62,6 +63,7 @@ class Engine:
         self.paused: dict[str, str] = {}         # marché -> raison (pause jusqu'à intervention)
         self.blocked: set[str] = set()           # marchés bloqués ce cycle (ordre incertain)
         self.equity: dict[str, float] = {}
+        self.breakers = Breakers(settings.risk, journal, clock)   # disjoncteurs (CDC §4)
         self._last_connect: dict[str, float] = {}
         self._seen: dict[str, int] = {}          # dernière bougie vue (copie mémoire)
         self._last_alerts: dict[str, str] = {}
@@ -132,6 +134,7 @@ class Engine:
         self._read_equity()
         self._resolve_uncertain(now)
         self._manage_positions()
+        self._safety_close()
         banned = {name for name in self.brokers if self._banned(name, now)}
         for market in self.settings.markets:
             if not market.enabled or market.platform not in self.brokers:
@@ -183,6 +186,7 @@ class Engine:
             try:
                 self.equity[name] = broker.equity()
                 self._j("save_equity", name, self.equity[name])
+                self._breaker_events(name, self.breakers.update_equity(name, self.equity[name]))
             except Exception as exc:  # noqa: BLE001
                 self.alert("error", f"{name} : capital illisible ({exc})", key=f"equity:{name}")
 
@@ -291,7 +295,7 @@ class Engine:
             return
         self._j("save_signal", symbol, last_ts, market.strategy, sig.side, sig.entry, sig.stop,
                 sig.target, sig.reason)
-        refusal = self._engine_checks(symbol)
+        refusal = self._engine_checks(symbol, market.platform)
         if refusal:
             self._j("save_decision", symbol, last_ts, "moteur", True, refusal)
             return
@@ -306,13 +310,47 @@ class Engine:
         if result.status == "opened":
             self.alert("info", f"{symbol} : position ouverte ({sig.reason})")
 
-    def _engine_checks(self, symbol: str) -> str | None:
+    def _engine_checks(self, symbol: str, platform: str) -> str | None:
         rows = self._open_rows()
         if any(r["market"] == symbol for r in rows):
             return "position déjà ouverte sur ce marché"
-        if len(rows) >= self.settings.risk.max_open_positions:
-            return f"{self.settings.risk.max_open_positions} positions maximum"
-        return None
+        trades_today = self._j("count_opened_since", utc_midnight(self._clock()))
+        if trades_today is None:
+            return "journal indisponible : nombre de trades du jour inconnu"
+        return self.breakers.can_enter(platform, rows, trades_today)
+
+    def _breaker_events(self, platform: str, events: list[str]) -> None:
+        for ev in events:
+            if ev == "pause_jour":
+                self.alert("critical", f"{platform} : perte du jour >= "
+                                       f"{self.settings.risk.daily_loss_pct:g} %, entrées en "
+                                       "pause jusqu'à demain (UTC)")
+            elif ev == "reprise_jour":
+                self.alert("info", f"{platform} : nouveau jour UTC, entrées reprises")
+            elif ev == "arret_securite":
+                self.alert("critical", f"{platform} : ARRÊT DE SÉCURITÉ — "
+                                       f"{self.breakers.safety_stopped(platform)} ; fermeture de "
+                                       "toutes les positions, redémarrage manuel nécessaire")
+            elif ev == "lecture_a_confirmer":
+                self.alert("warning", f"{platform} : variation du capital > "
+                                      f"{self.settings.risk.equity_drop_confirm_pct:g} % à "
+                                      "confirmer au prochain cycle", key=f"confirm:{platform}")
+
+    def _safety_close(self) -> None:
+        """Arrêt de sécurité : toutes les positions de la plateforme sont fermées ; en cas
+        d'échec, nouvel essai à chaque cycle jusqu'à ce que tout soit fermé."""
+        for row in self._open_rows():
+            name = row["platform"]
+            broker = self.brokers.get(name)
+            if broker is None or not self.breakers.safety_stopped(name):
+                continue
+            try:
+                broker.close_position(row["id"])
+                self._record_close(row, broker, "arrêt de sécurité (baisse depuis le plus haut)")
+            except Exception as exc:  # noqa: BLE001
+                self.alert("critical", f"{row['market']} : fermeture d'arrêt de sécurité "
+                                       f"impossible, nouvel essai au prochain cycle ({exc})",
+                           key=f"safety:{row['id']}")
 
     def _size(self, market, broker, sig) -> tuple[float, str]:
         equity = self.equity.get(market.platform)
@@ -320,11 +358,15 @@ class Engine:
             return 0.0, "capital inconnu"
         bid, ask = broker.quote(market.symbol)
         min_qty = broker.min_qty(market.symbol) if hasattr(broker, "min_qty") else 0.0
+        # plafond de 25 % : marge (levier) pour Capital.com, valeur pour Binance (A1)
+        leverage = (broker.leverage(market.symbol)
+                    if market.platform in FOREX_PLATFORMS and hasattr(broker, "leverage")
+                    else 1.0)
         r = self.settings.risk
         return position_size(equity, sig.entry, sig.stop, ask - bid, 2 * FEE_RATE * sig.entry,
                              risk_pct=r.risk_per_trade_pct, max_pos_pct=r.max_position_pct,
                              min_qty=min_qty, small_account_max_pct=r.small_account_max_risk_pct,
-                             max_spread_to_stop=r.max_spread_to_stop)
+                             max_spread_to_stop=r.max_spread_to_stop, leverage=leverage)
 
     def _reconcile(self) -> None:
         """La plateforme fait foi (CDC §6) : avoir inexpliqué -> pause de la plateforme ;

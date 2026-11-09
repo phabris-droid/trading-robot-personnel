@@ -272,3 +272,27 @@ def test_ip_ban_blocks_new_entries_and_alerts(tmp_path):
     eng.cycle()
     assert broker.open_calls == calls
     assert any(lvl == "critical" and "418" in msg for lvl, msg in alerts)
+
+
+def test_safety_stop_closes_everything_and_blocks_entries(tmp_path):
+    """Étape 4 : baisse confirmée >= 15 % -> arrêt de sécurité, toutes les positions de la
+    plateforme fermées, plus aucune entrée (redémarrage manuel)."""
+    broker = FakeBroker(DATA)
+    equity = {"value": 10_000.0}
+    broker.equity = lambda: equity["value"]
+    eng, journal, alerts = _engine(tmp_path, broker)
+    eng.cycle()
+    broker._create("x1", "ETHUSDT", "buy", 1.0, 1.0, 1e6)
+    journal.open_position("x1", "binance", "ETHUSDT", "buy", 1.0, broker.pos["x1"]["entry"],
+                          1.0, 1e6, client_id="x1")
+    equity["value"] = 8_000.0
+    eng.cycle()                                     # chute de 20 % : à confirmer
+    assert broker.pos["x1"]["closed"] is False
+    eng.cycle()                                     # confirmée : arrêt de sécurité
+    assert broker.pos["x1"]["closed"] is True
+    assert journal.open_positions() == []
+    assert any(lvl == "critical" and "ARRÊT DE SÉCURITÉ" in msg for lvl, msg in alerts)
+    calls = list(broker.open_calls)
+    broker.i += 50
+    eng.cycle()
+    assert broker.open_calls == calls               # aucune nouvelle entrée
