@@ -692,6 +692,7 @@ def test_uncertain_orders_count_in_position_limits(tmp_path):
                           client_id="u9")
     journal.save_order(client_id="c-unc", platform="capital", market="EURUSD", side="buy",
                        qty=500, status="uncertain", stop=1.07, target=1.10, strategy="x")
+    eng._equity_ts["capital"] = eng.now()          # capital confirmé (T8)
     assert eng._engine_checks("GBPUSD", "capital") is not None
     assert "incertain" in eng._engine_checks("EURUSD", "capital")
 
