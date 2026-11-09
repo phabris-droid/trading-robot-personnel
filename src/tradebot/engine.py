@@ -76,6 +76,7 @@ class Engine:
         self._equity_saved: dict[str, float] = {}   # A7 : dernier point de capital journalisé
         self._next_candle: dict[str, int] = {}   # A8 : pas de relecture avant la bougie suivante
         self._pending_checked = False             # T3 : ordres « pending » d'avant l'arrêt
+        self._equity_ts: dict[str, float] = {}   # T8 : heure de la dernière lecture confirmée
         self._seen: dict[str, int] = {}          # dernière bougie vue (copie mémoire)
         self._last_alerts: dict[str, str] = {}
         if threading.current_thread() is threading.main_thread():
@@ -233,6 +234,7 @@ class Engine:
                     # (sinon l'analyste des risques verrait un faux plus haut ou une fausse chute)
                     continue
                 self.equity[name] = value
+                self._equity_ts[name] = self._clock()      # T8 : dernière lecture confirmée
                 self._save_equity(name, value)
             except Exception as exc:  # noqa: BLE001
                 self.alert("error", f"{name} : capital illisible ({exc})", key=f"equity:{name}")
@@ -422,6 +424,11 @@ class Engine:
             self._pause(symbol, f"position {result.position_id} à vérifier ({result.reason})")
 
     def _engine_checks(self, symbol: str, platform: str) -> str | None:
+        # T8 : capital non confirmé récemment (lecture en panne ou « à confirmer ») : les
+        # disjoncteurs ne sont plus mesurés -> aucune entrée
+        seen = self._equity_ts.get(platform)
+        if seen is None or self._clock() - seen > 2 * self.settings.cycle_seconds + 5:
+            return "capital non confirmé récemment : disjoncteurs non mesurés"
         rows = self._open_rows()
         if any(r["market"] == symbol for r in rows):
             return "position déjà ouverte sur ce marché"

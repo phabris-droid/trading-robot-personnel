@@ -806,3 +806,16 @@ def test_audit6_inconsistent_position_keeps_its_software_stop(tmp_path):
     broker.quote = lambda symbol: (row["stop"] * 0.99, row["stop"] * 0.995)
     eng._manage_positions()
     assert journal.open_positions() == []
+
+
+def test_audit8_no_entry_when_equity_is_not_confirmed_recently(tmp_path):
+    """Audit trading n° 8 : lecture du capital en panne : disjoncteurs non mesurés -> aucune
+    nouvelle entrée sur cette plateforme."""
+    now = {"t": 1e9}
+    eng = Engine(SETTINGS, Journal(tmp_path / "tradebot_demo.db", "demo"), connectors={},
+                 alert=lambda *_: None, clock=lambda: now["t"])
+    assert "capital" in eng._engine_checks("BTCUSDT", "binance")
+    eng._equity_ts["binance"] = now["t"]
+    assert eng._engine_checks("BTCUSDT", "binance") is None
+    now["t"] += 3 * SETTINGS.cycle_seconds
+    assert "capital" in eng._engine_checks("BTCUSDT", "binance")
