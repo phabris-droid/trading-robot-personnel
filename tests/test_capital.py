@@ -481,3 +481,22 @@ def test_position_reappearing_after_being_declared_closed_pauses_the_market(mock
     findings = reconcile([], {"capital": cap})
     assert any(f.action == "pause_market" and f.position_id == "D1" for f in findings)
     assert cap.manual_positions() == []                          # pas « ouverte à la main »
+
+
+def test_adv11_forming_candle_is_not_used_when_local_clock_is_ahead(mock, cap, clock):
+    """Horloge locale 2 min en avance : la bougie que Capital.com n'a pas encore clôturée
+    n'est jamais utilisée pour décider."""
+    from datetime import UTC, datetime
+
+    h0 = int(NOW) - int(NOW) % 3600
+
+    def price(ts):
+        q = {"bid": 1.08, "ask": 1.0802}
+        return {"snapshotTimeUTC": datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+                "openPrice": q, "highPrice": q, "lowPrice": q, "closePrice": q,
+                "lastTradedVolume": 10}
+    mock.get(host=HOST, path="/api/v1/prices/EURUSD").respond(
+        json={"prices": [price(h0 - 7200), price(h0 - 3600)]})
+    clock["now"] = h0 + 30                         # le serveur, lui, est à h0 - 90 s
+    df = cap.candles("EURUSD", limit=10)
+    assert int(df["close_ts"].iloc[-1]) == h0 - 3600

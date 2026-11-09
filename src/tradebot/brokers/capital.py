@@ -77,6 +77,7 @@ RESOLUTION_1H = "HOUR"
 MAX_CANDLES = 1000
 HOUR_S = 3600
 ABSENCES_TO_CLOSE = 2          # CDC §6 : fermée seulement après 2 absences consécutives
+CLOSE_MARGIN_S = 120          # ADV11 : bougie close seulement 2 min après son heure de fin
 UNCERTAIN_MATCH_WINDOW_S = 120  # une position ouverte jusqu'à 2 min avant l'envoi peut être la nôtre
 
 
@@ -317,7 +318,9 @@ class CapitalCFD(Broker):
         seen: set[int] = set()
         for p in raw_prices:
             ts = _utc_ts(p["snapshotTimeUTC"])
-            if ts + HOUR_S > now or ts in seen:   # bougie en cours ou en double : ignorée
+            # ADV11 : marge d'horloge : une horloge locale un peu en avance ne fait jamais
+            # décider sur une bougie que la plateforme n'a pas encore clôturée
+            if ts + HOUR_S + CLOSE_MARGIN_S > now or ts in seen:   # en cours ou en double
                 continue
             seen.add(ts)
 
