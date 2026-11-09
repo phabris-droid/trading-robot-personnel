@@ -770,3 +770,21 @@ def test_equity_never_counts_an_already_sold_position_twice(mock, bn):
     mock.get(host=DEMO, path="/api/v3/account").respond(
         json=_account(btc_free="0.5", btc_locked="0.00122", usdt="100"))   # encore détenu
     assert bn.equity() == pytest.approx(100 + 0.00122 * 60000.0)
+
+
+def test_audit1_partial_exit_is_counted_once_and_the_rest_is_protected(mock, bn):
+    """Audit trading n° 1 : la même exécution partielle relue à chaque cycle n'est soustraite
+    qu'une fois ; le reste reçoit un nouvel OCO (jamais « fermée » à tort, jamais sans stop)."""
+    _open(mock, bn)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(
+        json={"listClientOrderId": "t1-o1", "listOrderStatus": "ALL_DONE", "orders": LEGS})
+    mock.get(host=DEMO, path="/api/v3/order").respond(json={
+        "orderId": 7, "status": "CANCELED", "executedQty": "0.00050",
+        "cummulativeQuoteQty": "29.0"})
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00072"))
+    oco = mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(json={})
+    for _ in range(3):
+        assert bn.ensure_stop("t1") == "replaced"
+    [pos] = bn.positions()
+    assert pos["qty"] == pytest.approx(0.00072)
+    assert _params(oco.calls.last)["quantity"] == "0.00072"

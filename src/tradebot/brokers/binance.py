@@ -29,7 +29,7 @@ import hmac
 import math
 import time
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from urllib.parse import urlencode
 
@@ -104,6 +104,9 @@ class BinancePosition:
     exit_price: float = 0.0   # A6 : prix moyen réellement exécuté à la sortie (0 = inconnu)
     exit_uncertain: str = ""  # C2 : identifiant d'une vente de sortie au statut incertain
     exit_not_found: int = 0   # C2 : recherches infructueuses de cette vente
+    # T1 : quantité de sortie déjà comptée par ordre (orderId -> executedQty) : une même
+    # exécution relue au cycle suivant n'est JAMAIS soustraite deux fois
+    exits_applied: dict = field(default_factory=dict)
 
 
 BAN_DEFAULT_S = 300.0             # 418 sans durée indiquée : 5 min sans aucune requête
@@ -519,12 +522,8 @@ class BinanceSpot(Broker):
                               {"symbol": pos.symbol, "orderId": od["orderId"]}, signed=True)
         executed = _dec(final.get("executedQty")) or Decimal(0)
         f = self.filters(pos.symbol)
-        remaining = Decimal(str(pos.qty)) - executed
-        if remaining < f.min_qty:
-            self._apply_exit(pos, executed, final)
+        if self._consume_exit(pos, executed, final):     # T1 : compté une seule fois
             return "closed_by_platform"
-        pos.exit_price = _avg_price(final) or pos.exit_price
-        pos.qty = float(remaining)
         free, _locked = self.balances().get(f.base_asset, (0.0, 0.0))
         self._sell(pos, f.floor_qty(min(pos.qty, free)))   # incomplet -> PositionInconsistent
         return "closed_no_stop"
@@ -585,16 +584,29 @@ class BinanceSpot(Broker):
         self._apply_exit(pos, executed, od)          # partielle -> PositionInconsistent
         return True
 
-    def _apply_exit(self, pos: BinancePosition, executed: Decimal, fill: dict | None = None) -> None:
+    def _consume_exit(self, pos: BinancePosition, executed: Decimal,
+                      fill: dict | None = None) -> bool:
+        """Compte une exécution de sortie UNE seule fois par ordre (T1). True si la position
+        est entièrement sortie ; sinon pos.qty = reste à protéger ou à vendre."""
         f = self.filters(pos.symbol)
+        key = str((fill or {}).get("orderId") or (fill or {}).get("clientOrderId") or "")
+        already = Decimal(str(pos.exits_applied.get(key, "0"))) if key else Decimal(0)
+        delta = max(executed - already, Decimal(0))
+        if key:
+            pos.exits_applied[key] = str(max(executed, already))
         pos.exit_price = _avg_price(fill) or pos.exit_price
-        remaining = Decimal(str(pos.qty)) - executed
+        remaining = Decimal(str(pos.qty)) - delta
         if remaining < f.min_qty:
             pos.status = "closed"
-            return
+            return True
         pos.qty = float(remaining)
+        return False
+
+    def _apply_exit(self, pos: BinancePosition, executed: Decimal, fill: dict | None = None) -> None:
+        if self._consume_exit(pos, executed, fill):
+            return
         pos.status = "inconsistent"
-        raise PositionInconsistent(pos.id, f"sortie partielle : {remaining} restant")
+        raise PositionInconsistent(pos.id, f"sortie partielle : {pos.qty} restant")
 
     def open_position(self, symbol: str, side: str, qty: float, stop: float, target: float,
                       client_id: str) -> str:
@@ -699,9 +711,10 @@ class BinanceSpot(Broker):
         if live is not None:
             return self._finish_triggered_stop(pos, live)
         # « fermée par la plateforme » UNIQUEMENT si une vente exécutée de l'OCO est vue
-        if filled:
-            self._apply_exit(pos, Decimal(str(filled["executedQty"])), filled)  # partiel -> incohérent
+        if filled and self._consume_exit(pos, _dec(filled.get("executedQty")) or Decimal(0),
+                                         filled):
             return "closed_by_platform"
+        # sortie partielle (T1) : le reste n'est plus protégé -> OCO reposé ci-dessous
         # aucune exécution vue : le stop est absent -> le reposer, sinon vendre (CDC §6)
         f = self.filters(pos.symbol)
         free, _locked = self.balances().get(f.base_asset, (0.0, 0.0))
@@ -736,9 +749,9 @@ class BinanceSpot(Broker):
                 if exc.code not in CODES_NOT_FOUND:   # déjà exécuté ou annulé : on vérifie
                     raise
             filled = self._oco_fill(pos.oco_id)
-            if filled:                                 # stop ou objectif exécuté
-                self._apply_exit(pos, Decimal(str(filled["executedQty"])), filled)
-                return
+            if filled and self._consume_exit(pos, _dec(filled.get("executedQty")) or Decimal(0),
+                                             filled):
+                return                                 # stop ou objectif exécuté en entier
         pos.status = "unprotected"
         # l'annulation doit avoir libéré la quantité : plus aucun ordre du robot ouvert
         still_open = [o for o in self._request("GET", self.trading_url, EP_OPEN_ORDERS,
