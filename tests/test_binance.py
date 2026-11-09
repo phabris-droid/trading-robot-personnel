@@ -856,3 +856,24 @@ def test_audit13_usdt_gains_are_not_unexplained_balances(mock, bn):
     bn.baseline = {"USDT": 100.0}
     mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(usdt="130"))
     assert bn.untracked_balances() == {}
+
+
+def test_audit9_and_r05_unreadable_quote_after_a_filled_buy_never_loses_the_position(mock, bn):
+    """T9 / R05 : achat exécuté puis cotation illisible : la position est toujours suivie et
+    fermée aussitôt si l'OCO ne peut pas être posé (jamais « refusée », jamais sans stop)."""
+    orders = _orders_route(mock, buy=httpx.Response(200, json={
+        **FILL, "cummulativeQuoteQty": None}))
+    mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(json={})
+    n = {"calls": 0}
+
+    def book(request):
+        n["calls"] += 1
+        if n["calls"] == 1:
+            return httpx.Response(200, json=BOOK)
+        return httpx.Response(200, json={"symbol": "BTCUSDT", "bidPrice": None, "askPrice": None})
+    mock.get(host=LIVE, path="/api/v3/ticker/bookTicker").mock(side_effect=book)
+    mock.get(host=DEMO, path="/api/v3/account").respond(json=_account(btc_free="0.00122"))
+    with pytest.raises(StopNotPlaced) as exc:
+        bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert exc.value.closed is True
+    assert _params(orders.calls.last)["side"] == "SELL"

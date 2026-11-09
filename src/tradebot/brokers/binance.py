@@ -304,7 +304,9 @@ class BinanceSpot(Broker):
 
     def quote(self, symbol: str) -> tuple[float, float]:
         d = self._request("GET", self.market_data_url, EP_BOOK_TICKER, {"symbol": symbol})
-        bid, ask = float(d["bidPrice"]), float(d["askPrice"])
+        # R05 : cotation tronquée ou nulle = ApiError (une BrokerError), jamais TypeError
+        b, a = _dec((d or {}).get("bidPrice")), _dec((d or {}).get("askPrice"))
+        bid, ask = (float(b) if b is not None else 0.0), (float(a) if a is not None else 0.0)
         if not (bid > 0 and ask >= bid):
             raise ApiError(f"cotation incohérente pour {symbol} : {bid} / {ask}")
         return bid, ask
@@ -704,7 +706,14 @@ class BinanceSpot(Broker):
                         if isinstance(x, dict) and x.get("commissionAsset") == f.base_asset),
                        Decimal(0))
         net = f.floor_qty(float(executed - fee_base))
-        entry = float(quote_spent / executed) if quote_spent > 0 else self.quote(symbol)[1]
+        entry = float(quote_spent / executed) if quote_spent > 0 else 0.0
+        if entry <= 0:
+            # T9 : achat DÉJÀ exécuté : une cotation en panne ne doit jamais le faire classer
+            # « refusé » (position non suivie, sans OCO) -> repli entre stop et objectif
+            try:
+                entry = self.quote(symbol)[1]
+            except BrokerError:
+                entry = (stop + target) / 2
 
         pos = BinancePosition(client_id, symbol, float(net), entry, stop, target, client_id,
                               status="unprotected")
@@ -713,7 +722,7 @@ class BinanceSpot(Broker):
             self._place_oco(pos, net)
         except OrderUncertain:
             return pos.id            # T7 : OCO recherché au prochain cycle (stop logiciel actif)
-        except BrokerError as exc:
+        except Exception as exc:  # noqa: BLE001 - R05 : toute erreur -> fermeture aussitôt
             # CDC §6 : si le stop ne peut pas être posé, la position est fermée aussitôt
             try:
                 self._sell(pos, net)
