@@ -152,6 +152,8 @@ class TelegramService:
                                        self._on_message))
         await app.initialize()
         await app.start()
+        if app.updater is None:
+            raise RuntimeError("Telegram : aucun updater pour la réception des commandes")
         await app.updater.start_polling(drop_pending_updates=True)
         self._app, self._bot = app, app.bot
 
