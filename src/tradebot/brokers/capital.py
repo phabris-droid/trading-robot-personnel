@@ -346,8 +346,14 @@ class CapitalCFD(Broker):
         acc = next((a for a in accounts if a.get("preferred")), accounts[0] if accounts else None)
         if acc is None:
             raise ApiError("aucun compte Capital.com")
-        bal = acc.get("balance", {})
-        total = (_num(bal.get("balance")) or 0.0) + (_num(bal.get("profitLoss")) or 0.0)
+        bal = acc.get("balance") if isinstance(acc.get("balance"), dict) else {}
+        balance, pnl = _num(bal.get("balance")), _num(bal.get("profitLoss"))
+        if balance is None:
+            # R09 : solde absent ou illisible = lecture illisible, JAMAIS 0 (sinon deux lectures
+            # identiques « confirmeraient » une chute de 97 % et déclencheraient l'arrêt de
+            # sécurité, avec fermeture de toutes les positions)
+            raise ApiError("solde Capital.com illisible")
+        total = balance + (pnl or 0.0)
         self.account_currency = acc.get("currency", self.account_currency)
         return total
 

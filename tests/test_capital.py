@@ -500,3 +500,14 @@ def test_adv11_forming_candle_is_not_used_when_local_clock_is_ahead(mock, cap, c
     clock["now"] = h0 + 30                         # le serveur, lui, est à h0 - 90 s
     df = cap.candles("EURUSD", limit=10)
     assert int(df["close_ts"].iloc[-1]) == h0 - 3600
+
+
+@pytest.mark.parametrize("balance", [{"balance": None, "profitLoss": 2.5}, {"profitLoss": 2.5},
+                                     None])
+def test_r09_unreadable_balance_is_an_error_never_zero(mock, cap, balance):
+    """Testeur adverse R09 : solde illisible -> erreur de lecture, jamais un capital de 2,5 $
+    qui déclencherait l'arrêt de sécurité."""
+    mock.get(host=HOST, path="/api/v1/accounts").respond(json={"accounts": [
+        {"preferred": True, "currency": "USD", "balance": balance}]})
+    with pytest.raises(ApiError):
+        cap.equity()
