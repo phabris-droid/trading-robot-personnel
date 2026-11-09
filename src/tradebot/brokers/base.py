@@ -1,7 +1,9 @@
 """Interface commune des plateformes et erreurs partagées (CDC §2, §6)."""
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
+from email.utils import parsedate_to_datetime
 from typing import Literal
 
 import pandas as pd
@@ -110,3 +112,27 @@ class Broker(ABC):
 
     @abstractmethod
     def positions(self) -> list[dict]: ...
+
+
+# --- commun aux plateformes (D6) ---------------------------------------------------------------
+
+RETRY_AFTER_MAX_S = 60.0
+
+
+def parse_retry_after(value: str | None, now: float, default: float = 1.0,
+                      cap: float = RETRY_AFTER_MAX_S) -> float:
+    """En-tête Retry-After : secondes (« 3 ») ou date HTTP (« Wed, 21 Oct 2026 07:28:00 GMT »).
+    Valeur absente ou illisible -> `default`. Résultat borné entre 0 et `cap` secondes."""
+    seconds = default
+    if value:
+        text = value.strip()
+        try:
+            seconds = float(text)
+        except ValueError:
+            try:
+                seconds = parsedate_to_datetime(text).timestamp() - now
+            except (TypeError, ValueError, IndexError, OverflowError, OSError):
+                seconds = default
+    if not math.isfinite(seconds):
+        seconds = default
+    return min(max(seconds, 0.0), cap)

@@ -31,7 +31,6 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
-from email.utils import parsedate_to_datetime
 from urllib.parse import urlencode
 
 import httpx
@@ -49,6 +48,7 @@ from tradebot.brokers.base import (
     RateLimited,
     StopNotPlaced,
     StopStatus,
+    parse_retry_after,   # D6 : défini dans base, commun aux plateformes
 )
 
 # --- Constantes de l'API (isolées pour être corrigées facilement au jour 1) ------------------
@@ -103,28 +103,8 @@ class BinancePosition:
     status: str = "open"   # open | unprotected | inconsistent | closed
 
 
-RETRY_AFTER_MAX_S = 60.0
 BAN_DEFAULT_S = 300.0             # 418 sans durée indiquée : 5 min sans aucune requête
 BAN_MAX_S = 3 * 24 * 3600.0
-
-
-def parse_retry_after(value: str | None, now: float, default: float = 1.0,
-                      cap: float = RETRY_AFTER_MAX_S) -> float:
-    """En-tête Retry-After : secondes (« 3 ») ou date HTTP (« Wed, 21 Oct 2026 07:28:00 GMT »).
-    Valeur absente ou illisible -> `default`. Résultat borné entre 0 et `cap` secondes."""
-    seconds = default
-    if value:
-        text = value.strip()
-        try:
-            seconds = float(text)
-        except ValueError:
-            try:
-                seconds = parsedate_to_datetime(text).timestamp() - now
-            except (TypeError, ValueError, IndexError, OverflowError, OSError):
-                seconds = default
-    if not math.isfinite(seconds):
-        seconds = default
-    return min(max(seconds, 0.0), cap)
 
 
 def _floor(value: Decimal, step: Decimal) -> Decimal:

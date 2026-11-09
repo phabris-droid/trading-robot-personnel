@@ -1,5 +1,6 @@
 """Client Capital.com CFD (CDC §2, §6) — réseau entièrement simulé par respx."""
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -340,3 +341,12 @@ def test_restart_adopts_journal_position(mock, cap):
         _position(deal_id="D7", epic="GBPUSD", side="SELL", stop=1.26, target=1.23)]})
     assert cap.ensure_stop("D7") == "ok"
     assert cap.manual_positions() == []
+
+
+def test_retry_after_parsing_is_shared_by_both_platforms():
+    """D6 : Capital.com ne dépend plus du module Binance pour lire Retry-After."""
+    from tradebot.brokers import base, binance, capital
+
+    assert capital.parse_retry_after is base.parse_retry_after
+    assert binance.parse_retry_after is base.parse_retry_after
+    assert "brokers.binance" not in Path(capital.__file__).read_text(encoding="utf-8")

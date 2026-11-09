@@ -52,8 +52,8 @@ from tradebot.brokers.base import (
     RateLimited,
     StopNotPlaced,
     StopStatus,
+    parse_retry_after,
 )
-from tradebot.brokers.binance import parse_retry_after
 
 # --- Constantes de l'API (isolées pour être corrigées facilement au jour 1) ------------------
 EP_SESSION = "/api/v1/session"
