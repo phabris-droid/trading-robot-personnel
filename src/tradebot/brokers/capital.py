@@ -33,6 +33,8 @@
 from __future__ import annotations
 
 import math
+from contextlib import suppress
+from email.utils import parsedate_to_datetime
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -134,6 +136,7 @@ class CapitalCFD(Broker):
         self._token = ""
         self._last_request = float("-inf")
         self.account_currency = ""
+        self._server_offset: float | None = None   # R10 : heure serveur - heure locale (s)
         self._markets: dict[str, dict] = {}
         self._positions: dict[str, CapitalPosition] = {}
         self._pending: dict[str, dict] = {}      # client_id -> ordre au statut incertain
@@ -212,6 +215,7 @@ class CapitalCFD(Broker):
                 continue
             self._last_request = self._clock()
             status = resp.status_code
+            self._note_server_time(resp)
             if status == 401 and not relogged:
                 relogged = True              # session expirée : une seule reconnexion
                 self.login()
@@ -312,9 +316,19 @@ class CapitalCFD(Broker):
             t = to
         return self._to_frame(prices, None)
 
+    def _note_server_time(self, resp) -> None:
+        """R10 : heure de Capital.com lue dans l'en-tête HTTP Date (précision 1 s)."""
+        with suppress(TypeError, ValueError, IndexError, OverflowError):
+            server = parsedate_to_datetime(resp.headers.get("Date", "")).timestamp()
+            self._server_offset = server - self._clock()
+
+    def server_now(self) -> float:
+        """Heure de la plateforme (repli : horloge locale) : âge des signaux, bougies closes."""
+        return self._clock() + (self._server_offset or 0.0)
+
     def _to_frame(self, raw_prices: list[dict], limit: int | None,
                   margin_s: int = 0) -> pd.DataFrame:
-        now = self._clock()
+        now = self.server_now()
         rows = []
         seen: set[int] = set()
         for p in raw_prices:

@@ -511,3 +511,26 @@ def test_r09_unreadable_balance_is_an_error_never_zero(mock, cap, balance):
         {"preferred": True, "currency": "USD", "balance": balance}]})
     with pytest.raises(ApiError):
         cap.equity()
+
+
+def test_r10_forming_candle_is_excluded_with_server_time_even_5_min_ahead(mock, cap, clock):
+    """Testeur adverse R10 : horloge locale 5 min en avance : l'heure de Capital.com (en-tête
+    Date) fait foi pour décider qu'une bougie est close."""
+    from datetime import UTC, datetime
+    from email.utils import format_datetime
+
+    h0 = int(NOW) - int(NOW) % 3600
+    server = h0 - 90
+
+    def price(ts):
+        q = {"bid": 1.08, "ask": 1.0802}
+        return {"snapshotTimeUTC": datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+                "openPrice": q, "highPrice": q, "lowPrice": q, "closePrice": q,
+                "lastTradedVolume": 10}
+    mock.get(host=HOST, path="/api/v1/prices/EURUSD").respond(
+        json={"prices": [price(h0 - 7200), price(h0 - 3600)]},
+        headers={"Date": format_datetime(datetime.fromtimestamp(server, UTC), usegmt=True)})
+    clock["now"] = server + 300
+    df = cap.candles("EURUSD", limit=10)
+    assert int(df["close_ts"].iloc[-1]) == h0 - 3600
+    assert cap.server_now() == pytest.approx(server, abs=1)

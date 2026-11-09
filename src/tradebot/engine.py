@@ -23,6 +23,7 @@ le moteur applique déjà le plafond de positions et la taille de position.
 from __future__ import annotations
 
 import json
+import math
 import signal
 import threading
 import time
@@ -371,7 +372,7 @@ class Engine:
     def _decide(self, market) -> None:
         symbol = market.symbol
         broker = self.brokers[market.platform]
-        if self.now() < self._next_candle.get(symbol, 0):
+        if self._platform_now(broker) < self._next_candle.get(symbol, 0):
             return                                  # A8 : prochaine bougie pas encore close
         df = broker.candles(symbol, limit=CANDLES)
         if df.empty:
@@ -397,7 +398,7 @@ class Engine:
             return
         self._j("save_signal", symbol, last_ts, market.strategy, sig.side, sig.entry, sig.stop,
                 sig.target, sig.reason)
-        age = self.now() - last_ts
+        age = self._platform_now(broker) - last_ts   # R08 : heure de la plateforme
         if age > self.settings.engine.signal_max_age_minutes * 60:
             self._j("save_decision", symbol, last_ts, "moteur", True,
                     f"signal périmé ({int(age // 60)} min après la clôture)")
@@ -422,6 +423,15 @@ class Engine:
             self.alert("info", f"{symbol} : position ouverte ({sig.reason})")
         elif result.status == "unprotected":
             self._pause(symbol, f"position {result.position_id} à vérifier ({result.reason})")
+
+    def _platform_now(self, broker) -> float:
+        """R08 / R10 : heure de la plateforme quand elle est connue (horloge du VPS décalée),
+        sinon horloge locale."""
+        try:
+            value = float(broker.server_now())
+        except Exception:  # noqa: BLE001 - méthode absente ou en panne : horloge locale
+            return self.now()
+        return value if math.isfinite(value) and value > 0 else self.now()
 
     def _engine_checks(self, symbol: str, platform: str) -> str | None:
         # T8 : capital non confirmé récemment (lecture en panne ou « à confirmer ») : les

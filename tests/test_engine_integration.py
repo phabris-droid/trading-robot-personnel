@@ -820,3 +820,18 @@ def test_audit8_no_entry_when_equity_is_not_confirmed_recently(tmp_path):
     assert eng._engine_checks("BTCUSDT", "binance") is None
     now["t"] += 3 * SETTINGS.cycle_seconds
     assert "capital" in eng._engine_checks("BTCUSDT", "binance")
+
+
+def test_r08_signal_age_uses_platform_time(tmp_path):
+    """Testeur adverse R08 : VPS en retard de 30 min : l'âge du signal est mesuré à l'heure de
+    la plateforme (signal de 40 min refusé)."""
+    broker = FakeBroker(DATA)
+    eng, journal, _ = _engine(tmp_path, broker)
+    eng.cycle()                                     # 1re bougie mémorisée
+    broker.i += 1
+    close = float(DATA["BTCUSDT"]["close_ts"].iloc[broker.i - 1])
+    broker.server_now = lambda: close + 40 * 60
+    eng._clock = lambda: close + 10 * 60            # horloge locale en retard
+    eng._decide(next(m for m in SETTINGS.markets if m.symbol == "BTCUSDT"))
+    assert broker.open_calls == []
+    assert eng._platform_now(broker) == close + 40 * 60

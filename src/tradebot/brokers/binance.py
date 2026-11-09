@@ -203,6 +203,10 @@ class BinanceSpot(Broker):
     def _now_ms(self) -> int:
         return int(self._clock() * 1000) + self._offset_ms
 
+    def server_now(self) -> float:
+        """Heure de Binance (synchronisée par sync_time) : âge des signaux (R08)."""
+        return self._now_ms() / 1000
+
     def sync_time(self) -> None:
         before = self._clock()
         server = self._request("GET", self.trading_url, EP_TIME)["serverTime"]
