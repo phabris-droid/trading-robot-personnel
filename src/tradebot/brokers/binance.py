@@ -109,6 +109,7 @@ class BinancePosition:
     # T1 : quantité de sortie déjà comptée par ordre (orderId -> executedQty) : une même
     # exécution relue au cycle suivant n'est JAMAIS soustraite deux fois
     exits_applied: dict = field(default_factory=dict)
+    oco_uncertain: bool = False   # T7 : OCO envoyé au statut incertain, à rechercher
 
 
 BAN_DEFAULT_S = 300.0             # 418 sans durée indiquée : 5 min sans aucune requête
@@ -477,7 +478,11 @@ class BinanceSpot(Broker):
             # statut inconnu : on vérifie s'il existe avant de conclure (jamais de renvoi)
             found = self._find_oco(list_id)
             if not found or found.get("listOrderStatus") not in OCO_ACTIVE:
+                # T7 : peut-être posé mais pas encore visible : JAMAIS de vente au marché
+                # dans la foulée (deux sorties pour une position) ; recherché au cycle suivant
+                pos.oco_id, pos.oco_uncertain, pos.status = list_id, True, "unprotected"
                 raise
+        pos.oco_uncertain = False
         pos.oco_id = list_id
         pos.status = "open"
 
@@ -706,6 +711,8 @@ class BinanceSpot(Broker):
         self._positions[pos.id] = pos
         try:
             self._place_oco(pos, net)
+        except OrderUncertain:
+            return pos.id            # T7 : OCO recherché au prochain cycle (stop logiciel actif)
         except BrokerError as exc:
             # CDC §6 : si le stop ne peut pas être posé, la position est fermée aussitôt
             try:
@@ -720,6 +727,10 @@ class BinanceSpot(Broker):
         if pos.status == "closed":
             return "closed_by_platform"
         oco = self._locate_oco(pos)
+        if oco is None and pos.oco_uncertain:
+            pos.oco_uncertain = False            # T7 : une seconde recherche, puis on agit
+            raise OrderUncertain(pos.oco_id, "OCO au statut incertain introuvable : nouvelle "
+                                             "recherche au prochain cycle")
         if oco and oco.get("listOrderStatus") in OCO_ACTIVE:
             pos.oco_id = oco.get("listClientOrderId") or pos.oco_id
             pos.status = "open"
@@ -747,6 +758,8 @@ class BinanceSpot(Broker):
             if held < f.min_qty or held <= 0:
                 raise BrokerError(f"solde libre {free} insuffisant pour reposer le stop")
             self._place_oco(pos, held)
+        except OrderUncertain:
+            raise                            # T7 : jamais de vente tant que l'OCO est incertain
         except BrokerError:
             self._sell(pos, held)            # quantité nulle ou refus -> PositionInconsistent
             return "closed_no_stop"

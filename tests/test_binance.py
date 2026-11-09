@@ -834,3 +834,17 @@ def test_audit5_oco_is_never_replaced_before_the_uncertain_exit_is_found(mock, b
     calls = oco.call_count
     assert bn.ensure_stop("t1") == "closed_by_platform"
     assert oco.call_count == calls and bn.positions() == []
+
+
+def test_audit7_uncertain_oco_is_searched_never_followed_by_a_market_sell(mock, bn):
+    """Audit trading n° 7 : OCO au statut incertain et pas encore visible : aucune vente au
+    marché (elle toucherait les avoirs personnels) ; l'OCO est recherché au cycle suivant."""
+    orders = _orders_route(mock)
+    mock.post(host=DEMO, path="/api/v3/orderList/oco").respond(502)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(400, json=NOT_FOUND)
+    pid = bn.open_position("BTCUSDT", "buy", 0.00123, 59000, 61000, "t1")
+    assert all(c.request.url.params["side"] == "BUY" for c in orders.calls)
+    mock.get(host=DEMO, path="/api/v3/orderList").respond(
+        json={"listClientOrderId": "t1-o1", "listOrderStatus": "EXECUTING"})
+    assert bn.ensure_stop(pid) == "ok"                    # trouvé au cycle suivant
+    assert all(c.request.url.params["side"] == "BUY" for c in orders.calls)
