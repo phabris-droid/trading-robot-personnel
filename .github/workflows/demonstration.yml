@@ -69,7 +69,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Construction de l'image
         run: docker build -q -t tradebot:demo . > /dev/null
-      - name: Démarrage en mode DÉMO (sans clés : aucune plateforme, aucun ordre)
+      - name: "Démarrage en mode DÉMO (sans clés : aucune plateforme, aucun ordre)"
         run: |
           pw=$(openssl rand -hex 16)
           echo "::add-mask::$pw"
