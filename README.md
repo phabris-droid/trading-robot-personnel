@@ -133,7 +133,7 @@ uv pip compile pyproject.toml --extra dev --python-version 3.12 --python-platfor
 
 État au 2026-11-09, après l'étape 11 de `PROMPTS_CLAUDE_CODE.md` (audits trading, sécurité et
 tests adverses) et la campagne de corrections K / D / A / C / M / S / ADV. Toute la CI `dev`
-est verte (__NB_TESTS__ tests). Analyse détaillée : [docs/ETAPE_0_ANALYSE.md](docs/ETAPE_0_ANALYSE.md) ·
+est verte (432 tests, run 42635952165 : 30 points sur 30). Analyse détaillée : [docs/ETAPE_0_ANALYSE.md](docs/ETAPE_0_ANALYSE.md) ·
 réglages manuels du déploiement : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md).
 
 ### Encore ouvertes
