@@ -4,8 +4,8 @@ Telegram, le tableau de bord et les tâches planifiées.
 - message de vie (/vie), P&L (/pnl), positions, trades, actualités (/news), agenda (/agenda) ;
 - rapport du matin 7 h UTC : message de vie + analyse des marchés rédigée par Claude
   (si disponible) + agenda économique ;
-- audit hebdomadaire (dimanche 18 h UTC) : statistiques par stratégie et par marché, écrit
-  dans data/audits/ (le superviseur de l'étape 9 complète la comparaison au backtest) ;
+- statistiques de trades (_stats) partagées avec le superviseur (analysts/supervisor.py), seul
+  auteur de l'audit hebdomadaire (dimanche 18 h UTC, data/audits/) ; /audit lit le dernier ;
 - checklist /pret (CDC §10) : >= 30 trades, >= 14 jours, 0 erreur d'ordre / stop /
   réconciliation sur 7 jours, coupure maximale <= 15 min, validation historique OK,
   cohérence du journal.
@@ -133,34 +133,6 @@ def _stats(trades: list[dict]) -> dict:
             "profit_factor": round(gains / losses, 2) if losses > 0 else None,
             "pertes_de_suite_max": worst, "drawdown": round(drawdown, 2),
             "pnl": round(sum(t["pnl"] for t in trades), 2)}
-
-
-def weekly_audit(journal, now: float, audits_dir: str | Path) -> tuple[str, Path]:
-    """Écrit data/audits/audit-AAAA-MM-JJ.md ; renvoie (résumé Telegram, chemin)."""
-    trades = journal.trades_since(now - 7 * DAY)
-    by_strategy: dict[str, list[dict]] = {}
-    by_market: dict[str, list[dict]] = {}
-    for t in trades:
-        by_strategy.setdefault(t.get("strategy") or "inconnue", []).append(t)
-        by_market.setdefault(t["market"], []).append(t)
-    total = _stats(trades)
-    lines = [f"# Audit du {datetime.fromtimestamp(now, UTC):%Y-%m-%d}", "",
-             f"Total 7 jours : {json.dumps(total, ensure_ascii=False)}", "",
-             "## Par stratégie", ""]
-    lines += [f"- {k} : {json.dumps(_stats(v), ensure_ascii=False)}"
-              for k, v in sorted(by_strategy.items())]
-    lines += ["", "## Par marché", ""]
-    lines += [f"- {k} : {json.dumps(_stats(v), ensure_ascii=False)}"
-              for k, v in sorted(by_market.items())]
-    if total["trades"] < 20:
-        lines += ["", "Moins de 20 trades : aucune recommandation (CDC §5)."]
-    path = Path(audits_dir) / f"audit-{datetime.fromtimestamp(now, UTC):%Y-%m-%d}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    pf = "—" if total["profit_factor"] is None else total["profit_factor"]
-    summary = (f"📋 Audit hebdomadaire : {total['trades']} trades, P&L {total['pnl']:+.2f}, "
-               f"profit factor {pf}, drawdown {total['drawdown']:.2f}. Détail : {path.name}")
-    return summary, path
 
 
 def last_audit(audits_dir: str | Path) -> str:

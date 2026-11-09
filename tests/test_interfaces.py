@@ -55,14 +55,15 @@ def test_pnl_and_life_message(engine, journal):
     assert "DEMO" in msg and "Capital binance : 1000.00" in msg and "P&L jour : +5.00" in msg
 
 
-def test_weekly_audit_is_written_and_summarised(journal, tmp_path):
-    for i in range(5):
-        _trade(journal, f"t{i}", 3.0 if i % 2 else -1.0, T0 - i * 3600)
-    summary, path = reports.weekly_audit(journal, T0, tmp_path / "audits")
-    text = path.read_text(encoding="utf-8")
-    assert path.name == "audit-2026-11-10.md" and "## Par stratégie" in text
-    assert "Moins de 20 trades" in text and "5 trades" in summary
-    assert reports.last_audit(tmp_path / "audits").startswith("# Audit du 2026-11-10")
+def test_last_audit_reads_the_supervisor_report(tmp_path):
+    """D3 : un seul auteur d'audit (le superviseur) ; /audit lit le plus récent."""
+    audits = tmp_path / "audits"
+    assert reports.last_audit(audits) == "Aucun audit pour l'instant."
+    audits.mkdir()
+    (audits / "audit-2026-11-01.md").write_text("# ancien\n", encoding="utf-8")
+    (audits / "audit-2026-11-08.md").write_text("# Audit du superviseur\n", encoding="utf-8")
+    assert reports.last_audit(audits).startswith("# Audit du superviseur")
+    assert not hasattr(reports, "weekly_audit")
 
 
 def test_news_and_agenda_messages():
