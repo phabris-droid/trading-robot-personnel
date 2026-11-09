@@ -130,30 +130,58 @@ uv pip compile pyproject.toml --extra dev --python-version 3.12 --python-platfor
 
 ## Erreurs connues (de la plus grave à la moins grave)
 
-État au 2026-11-09, après l'étape 11 de `PROMPTS_CLAUDE_CODE.md` (audits trading, sécurité et
-tests adverses) et la campagne de corrections K / D / A / C / M / S / ADV. Toute la CI `dev`
-est verte (432 tests, run 42635952165 : 30 points sur 30). Analyse détaillée : [docs/ETAPE_0_ANALYSE.md](docs/ETAPE_0_ANALYSE.md) ·
-réglages manuels du déploiement : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md).
+État au 2026-11-09, après l'étape 11 de `PROMPTS_CLAUDE_CODE.md` **et son contre-audit** : les
+trois sous-agents (trading, sécurité, testeur adverse) ont été relancés sur le code corrigé ;
+tous leurs constats critiques et majeurs sont corrigés avec un test de non-régression. CI
+`dev` verte : **473 tests**, run 42645070330, 30 points sur 30.
+Conformité au cahier des charges : [docs/CONFORMITE_CDC.md](docs/CONFORMITE_CDC.md) ·
+analyse initiale : [docs/ETAPE_0_ANALYSE.md](docs/ETAPE_0_ANALYSE.md) ·
+déploiement : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md).
 
-### Encore ouvertes
+### Encore ouvertes (aucune critique ni majeure)
 
-| Gravité | # | Fichier | Erreur | Pourquoi pas encore corrigée |
+| Gravité | # | Fichier | Erreur |
+|---|---|---|---|
+| 🟠 majeure (manuelle) | M3-CD | CD `prod` | Pipeline de mise en ligne jamais exécuté : environnement `production`, secrets du VPS, utilisateur `deploy` à créer (`harden_vps.sh --deploy-key`). |
+| 🟡 moyenne | S11 | `requirements*.lock`, `pyproject.toml` | Verrous sans empreintes `--hash`, `setuptools` de construction non figé (régénération `uv pip compile --generate-hashes` à faire dans la CI). |
+| ⚪ mineure | S7 | `__main__.py` | En démo, mot de passe du tableau de bord sans longueur minimale. |
+| ⚪ mineure | S10 | `analysts/claude_ai.py` | Un titre piégé peut faire relever l'impact de tous les titres d'un même appel (blocage, sens sûr). |
+| ⚪ mineure | S13 | `deploy/Caddyfile` | Pas d'en-tête HSTS ; `/health` joignable depuis Internet via Caddy ; CSP avec `'unsafe-inline'`. |
+| ⚪ mineure | S14 | `deploy/harden_vps.sh` | Pas d'`AllowUsers` : un autre compte avec clé SSH (ex. `ubuntu`) reste ouvert. |
+| ⚪ mineure | M4-b | `brokers/binance.py` | USDT d'un achat incertain non comptés jusqu'à sa résolution ; USDT personnels comptés comme capital (limite CDC §11). |
+| ⚪ mineure | n7 / n8 / n9 | divers | Historique OCO limité à 100 listes ; actions Docker exercées par la seule CD ; liste `rejected` jamais vidée. |
+
+Valeurs choisies sans chiffre du CDC, **à confirmer** : `costs.*.stop_slippage_pct`,
+`engine.signal_max_age_minutes` (15), `engine.equity_save_minutes` (5), marge de clôture des
+bougies Capital.com (2 min), attente anti-force-brute (1 s doublée jusqu'à 5 min).
+
+### Contre-audit (2ᵉ passage) : erreur → commit → test
+
+| Gravité | # | Erreur | Commit | Test |
 |---|---|---|---|---|
-| 🟠 majeure | S1 | `interfaces/dashboard.py` | L'anti-force-brute (1 essai raté par seconde) ne limite pas vraiment les essais : le bon mot de passe passe toujours, même pendant la pause, donc un attaquant qui envoie beaucoup d'essais en parallèle les voit tous évalués. | **Décision requise** : il faut soit limiter par adresse IP, soit bloquer aussi le bon mot de passe pendant la pause. La 2ᵉ option contredit la règle du CDC §8 « le bon mot de passe passe toujours ». |
-| 🟠 majeure | M3-CD | CD `prod` | Pipeline de mise en ligne jamais exécuté ; environnement `production`, secrets du VPS et droits admin absents. | Manuelle : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md) |
-| 🟡 moyenne | S2 | `.github/workflows/*` | Actions GitHub et images d'outils citées par étiquette (`@v5`), pas par empreinte ; Trivy reçoit la socket Docker dans le job de publication. | Les empreintes doivent être relevées en ligne et figées une par une. |
-| 🟡 moyenne | S8 / S9 | `requirements*.lock`, `Dockerfile` | Fichiers de verrouillage sans empreintes (`--require-hashes` impossible), `setuptools` non figé, images de base citées par étiquette. | Régénération avec `uv pip compile --generate-hashes` et relevé des empreintes d'images : impossible sans Python local, à faire dans la CI. |
-| 🟡 moyenne | S6 / S7 | `deploy/harden_vps.sh` | La phrase de chiffrement des sauvegardes est sur le même disque que les sauvegardes ; l'utilisateur de déploiement (groupe `docker`) a de fait les droits root. | Choix d'exploitation : copier la phrase hors du serveur (le script le rappelle) ; un utilisateur sans groupe `docker` demande un mécanisme de déploiement différent. |
-| ⚪ mineure | M4-b | `brokers/binance.py` | Pendant un achat au statut incertain, les USDT dépensés ne sont comptés nulle part : le capital paraît plus bas jusqu'à la résolution (la confirmation des variations > 10 % et M9 limitent l'effet). Les USDT personnels sont comptés comme capital du robot. | Limite connue (CDC §11) : pas de séparation possible des USDT sur un même compte. |
-| ⚪ mineure | n7 | `brokers/binance.py` | Recherche d'un OCO dans l'historique limitée aux 100 dernières listes ; au-delà, l'OCO est considéré absent et reposé (sens prudent). | — |
-| ⚪ mineure | n8 | `cd-prod.yml` | Les actions Docker (buildx, build-push, login) ne sont exercées que par la CD. | — |
-| ⚪ mineure | n9 | `journal.py` | La liste `rejected` (écritures refusées) n'est jamais vidée. | — |
+| 🔴 | T1 | Sortie partielle Binance soustraite à chaque cycle : position déclarée fermée, reste sans stop (régression C1) | `5a46c0a` | `test_binance.py::test_audit1_partial_exit_is_counted_once_…` |
+| 🔴 | T2 | État moteur écrit pendant une panne du journal : arrêt d'urgence effacé (régression ADV14) | `4df7263` | `test_engine_integration.py::test_audit2_…` |
+| 🔴 | T3 | Ordre « pending » après un arrêt brutal jamais recherché | `8a2771b` | `test_engine_integration.py::test_audit3_…` |
+| 🔴 | R03 | OCO illisible / invisible : second OCO ou vente sur les avoirs personnels | `abbe4e5`, `fa66b99` | `test_binance.py::test_r03_…` (3 cas) |
+| 🔴 | R09 | Solde Capital.com nul lu comme 2,5 $ : arrêt de sécurité, tout fermé | `afacc01` | `test_capital.py::test_r09_…` |
+| 🟠 | T4 / T5 | Vente de sortie incertaine oubliée au redémarrage ; OCO reposé avant de la chercher | `3a1e4d8` | `test_binance.py::test_audit4_…`, `::test_audit5_…` |
+| 🟠 | T6 | Position « incohérente » sans stop logiciel | `4540d22` | `test_engine_integration.py::test_audit6_…` |
+| 🟠 | T7 | OCO incertain suivi d'une vente au marché | `99c671a` | `test_binance.py::test_audit7_…` |
+| 🟠 | T8 | Entrées sur un capital non confirmé (disjoncteurs non mesurés) | `9df2998`, `dcc8498` | `test_engine_integration.py::test_audit8_…` |
+| 🟠 | R04 / R05 / T9 | Quantité ou cotation nulle : exception imprévue, achat sans stop | `021440b`, `e1ca5a7` | `test_binance.py::test_r04_…`, `::test_audit9_and_r05_…` |
+| 🟠 | R06 / T13 | Poussière de frais ou gains USDT pris pour un avoir inexpliqué : Binance en pause | `75a2cc7`, `867fa9f` | `test_binance.py::test_r06_…`, `::test_audit13_…` |
+| 🟠 | R08 / R10 | Horloge du VPS décalée : signal périmé tradé, bougie en cours utilisée | `45dc7eb` | `test_engine_integration.py::test_r08_…`, `test_capital.py::test_r10_…` |
+| 🟠 | R11 | Avalanche d'alertes « journal indisponible » (Telegram saturé) | `c68747e` | `test_engine_integration.py::test_r11_…` |
+| 🟠 | R12–R15 | États enregistrés mal typés : démarrage ou disjoncteurs cassés | `4df7263`, `8c643af` | `::test_audit12_…`, `::test_r13_…`, `test_breakers.py::test_r15_…` |
+| 🟠 | S1 | Anti-force-brute inopérant (décision : limite par adresse IP) | `909b4b7`, `053abe5` | `test_dashboard.py::test_failed_attempts_are_limited_per_address_…` |
+| 🟠 | S2 | `feedparser` pouvait ouvrir un fichier local (`/dev/zero`) | `a556006` | `test_analysts.py::test_feed_body_is_never_opened_…` |
+| 🟠 | S3 / S4 | Trivy avec le socket Docker ; actions et images par étiquette mobile | `4e0aed8`, `ea609d2` | `test_deploy.py::test_tool_and_base_images_…`, `::test_every_github_action_…` |
+| 🟠 | S5 | Clé de déploiement équivalente à root (décision : commande forcée) | `27dfc8b` | `test_deploy.py::test_deploy_key_is_limited_…` |
+| 🟠 | S6 | Sauvegardes et phrase sur le même serveur (décision : clé publique + copie externe) | `6d6d12a` | `test_deploy.py::test_backups_use_the_owner_public_key_…` |
+| 🟡 | S8 / S9 / S12 | Redirections vers des noms internes, corps compressé, déploiement depuis une autre branche | `e3aca46`, `4e0aed8` | `test_analysts.py::test_redirect_to_internal_looking_names_…`, `::test_compressed_body_…` |
+| 🟡 | T10 / T11 / R14 / R16 | Constat de réconciliation non isolé, double absence, écriture d'état hors verrou, configurations absurdes | `9a36860`, `bf2f7a3`, `a833e21` | `test_engine_integration.py::test_audit10_…`, `test_capital.py::test_audit11_…`, `::test_r14_…`, `test_config.py` (R16) |
 
-Valeurs choisies sans chiffre du CDC, **à confirmer** : `costs.*.stop_slippage_pct` (0,05 % Binance,
-0,02 % Capital.com, backtest seulement), `engine.signal_max_age_minutes` (15),
-`engine.equity_save_minutes` (5), marge de clôture des bougies Capital.com (2 min).
-
-### Corrigées (erreur → statut → commit → test)
+### 1er passage de l'étape 11 : erreur → statut → commit → test
 
 Gravité : 🔴 critique · 🟠 majeure · 🟡 moyenne · ⚪ mineure / doublon.
 
