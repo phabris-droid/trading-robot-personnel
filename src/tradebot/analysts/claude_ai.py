@@ -162,8 +162,15 @@ class ClaudeAdvisor(Advisor):
             impacts = [str(x).lower() for x in answer.get("impacts", [])]
         except Exception:  # noqa: BLE001
             return ["normal"] * len(titles)
-        return ["high" if (i < len(impacts) and impacts[i] in ("fort", "high")) else "normal"
-                for i in range(len(titles))]
+        levels = ["high" if (i < len(impacts) and impacts[i] in ("fort", "high")) else "normal"
+                  for i in range(len(titles))]
+        # S10 : réponse anormale (nombre d'impacts différent du nombre de titres, ou presque
+        # tout relevé d'un coup) = signe d'un titre piégé : aucun impact relevé par l'IA,
+        # les mots-clés des règles décident seuls
+        if len(impacts) != len(titles) or (
+                len(titles) >= 4 and levels.count("high") > len(titles) // 2):
+            return ["normal"] * len(titles)
+        return levels
 
     # --- rapport du matin : analyse des marchés (budget veille) -------------------------------
 

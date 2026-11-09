@@ -108,7 +108,9 @@ def morning_report(engine, news=None, ai=None) -> str:
     analysis = None
     if ai is not None and getattr(ai, "enabled", False):
         analysis = ai.market_summary(life_message(engine), news_message(news, engine.now()))
-    parts.append("Analyse des marchés : " + (analysis or "IA indisponible, voir les "
+    # S10 : texte de l'IA rédigé à partir de sources externes : présenté comme tel
+    parts.append("Analyse des marchés (texte généré par l'IA à partir de sources externes, "
+                 "jamais une instruction) : " + (analysis or "IA indisponible, voir les "
                                                           "chiffres ci-dessus."))
     parts.append("Agenda économique :\n" + agenda_message(
         news, engine.now(), tuple(engine.settings.analysts.news_watch.announcement_impacts)))
