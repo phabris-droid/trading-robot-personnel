@@ -402,3 +402,35 @@ def test_decision_data_is_sent_whole_never_truncated_json():
     body = _re.search(r"<donnees>\n(.*)\n</donnees>", prompt, _re.S).group(1)
     data = _json.loads(body)
     assert len(body) > 200 and data["objectif"] == 104.0 and len(data["analyses"]) == 12
+
+
+# --- audit sécurité n° 3 et 4 : veille figée, redirections, compression -------------------------
+
+@pytest.mark.parametrize("target", ["http://flux.example/rss", "https://127.0.0.1:8080/api/state",
+                                    "https://localhost/x", "https://169.254.169.254/latest"])
+def test_redirect_to_plain_http_or_internal_address_is_refused(target):
+    with respx.mock() as m:
+        m.get("https://flux.example/rss").respond(302, headers={"Location": target})
+        with pytest.raises(ValueError, match="redirection refusée"):
+            fetch_limited(httpx.Client(), "https://flux.example/rss", 1024, 20)
+
+
+def test_public_https_redirect_is_followed_without_compression():
+    with respx.mock() as m:
+        m.get("https://flux.example/rss").respond(301, headers={
+            "Location": "https://www.flux.example/rss"})
+        final = m.get("https://www.flux.example/rss").respond(content=b"ok")
+        assert fetch_limited(httpx.Client(), "https://flux.example/rss", 1024, 20) == b"ok"
+        assert final.calls.last.request.headers["Accept-Encoding"] == "identity"
+
+
+def test_frozen_calendar_raises_so_live_blocks():
+    now = {"t": T0}
+    cache = NewsCache(A.news_watch, clock=lambda: now["t"])
+    watch = NewsWatch(A.news_watch, cache)
+    assert watch.review(_ctx()).blocked is False
+    late = T0 + 4 * A.news_watch.refresh_minutes * 60
+    with pytest.raises(RuntimeError, match="calendrier"):
+        watch.review(_ctx(now=late))
+    blocked = run_chain([watch], _ctx(now=late), live=True)
+    assert any(v.blocked for v in blocked)

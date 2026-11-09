@@ -16,6 +16,7 @@ jamais l'abaisser, et ne peut jamais lever un blocage d'actualité.
 from __future__ import annotations
 
 import calendar as _cal
+import ipaddress
 import json
 import threading
 import time
@@ -70,17 +71,44 @@ def feed_category(url: str) -> str:
 def fetch_limited(client: httpx.Client, url: str, max_bytes: int, timeout_s: float) -> bytes:
     """Téléchargement plafonné en taille ET en durée totale (un flux piégé ne fige rien)."""
     deadline = time.monotonic() + timeout_s
-    chunks, size = [], 0
-    with client.stream("GET", url, timeout=timeout_s, follow_redirects=True) as resp:
-        resp.raise_for_status()
-        for chunk in resp.iter_bytes():
-            size += len(chunk)
-            if size > max_bytes:
-                raise ValueError(f"flux {url} au-delà de {max_bytes} octets")
-            if time.monotonic() > deadline:
-                raise TimeoutError(f"flux {url} au-delà de {timeout_s} s")
-            chunks.append(chunk)
-    return b"".join(chunks)
+    # S4 : redirections suivies à la main (3 au plus, HTTPS vers un nom public seulement :
+    # jamais vers le tableau de bord local ni une adresse interne) ; contenu non compressé
+    for _ in range(MAX_REDIRECTS + 1):
+        _check_public_https(url)
+        chunks, size = [], 0
+        left = max(deadline - time.monotonic(), 0.1)
+        with client.stream("GET", url, timeout=left, follow_redirects=False,
+                           headers={"Accept-Encoding": "identity"}) as resp:
+            if resp.is_redirect:
+                url = str(resp.url.join(resp.headers.get("location", "")))
+                continue
+            resp.raise_for_status()
+            for chunk in resp.iter_bytes():
+                size += len(chunk)
+                if size > max_bytes:
+                    raise ValueError(f"flux {url} au-delà de {max_bytes} octets")
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"flux {url} au-delà de {timeout_s} s")
+                chunks.append(chunk)
+        return b"".join(chunks)
+    raise ValueError(f"flux {url} : plus de {MAX_REDIRECTS} redirections")
+
+
+MAX_REDIRECTS = 3
+STALE_REFRESHES = 3              # S3 : calendrier périmé après 3 rafraîchissements manqués
+
+
+def _check_public_https(url: str) -> None:
+    parts = httpx.URL(url)
+    host = (parts.host or "").lower()
+    if parts.scheme != "https" or not host:
+        raise ValueError(f"redirection refusée (non HTTPS) : {url}")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        ip = None
+    if host == "localhost" or host.endswith(".local") or (ip is not None and not ip.is_global):
+        raise ValueError(f"redirection refusée (adresse interne) : {url}")
 
 
 def classify(title: str, keywords: list[str]) -> str:
@@ -130,6 +158,9 @@ class NewsCache:
         self.errors: dict[str, str] = {}
         self._last_refresh = float("-inf")
         self._worker: threading.Thread | None = None
+        # S3 : dernière lecture réussie du calendrier ; trop ancienne (source en panne, fil de
+        # veille figé) -> la veille lève une erreur : bloquante en réel, signalée en démo
+        self.calendar_ok_ts = clock()
 
     def refresh(self, force: bool = False, background: bool = False) -> None:
         """Relit les sources si les données ont plus de N minutes. En arrière-plan, le moteur
@@ -165,11 +196,16 @@ class NewsCache:
                                 self.cfg.feed_timeout_s)
             events = parse_calendar(raw)
             errors.pop("calendrier", None)
+            self.calendar_ok_ts = self._clock()
         except Exception as exc:  # noqa: BLE001
             errors["calendrier"] = f"{type(exc).__name__}: {exc}"
         if self.ai is not None:
             news = self._raise_impacts(news)
         self.news, self.events, self.errors = news, events, errors
+
+    def stale_for(self, now: float) -> float:
+        """Secondes au-delà du délai toléré (3 rafraîchissements) ; 0 si à jour."""
+        return max(0.0, now - self.calendar_ok_ts - STALE_REFRESHES * self.cfg.refresh_minutes * 60)
 
     def _raise_impacts(self, news: dict[str, list[NewsItem]]) -> dict[str, list[NewsItem]]:
         """L'IA ne peut que RELEVER un impact (normal -> high), jamais l'abaisser."""
@@ -197,6 +233,9 @@ class NewsWatch(Advisor):
         self.atr_period = atr_period
 
     def review(self, ctx: AdvisorContext) -> Verdict:
+        if self.cache is not None and self.cache.stale_for(ctx.now) > 0:
+            raise RuntimeError("calendrier économique non relu depuis trop longtemps "
+                               "(veille figée ou source en panne)")
         if self.cache is not None:
             v = self._calendar(ctx) or self._news(ctx)
             if v:
