@@ -531,20 +531,31 @@ class Engine:
                            key=f"reco:{name}")
                 continue
             for f in findings:
-                if f.action == "pause_platform":
-                    for m in self.settings.markets:
-                        if m.platform == name:
-                            self._pause(m.symbol, f.detail)
-                elif f.action == "pause_market":
-                    self._pause(f.market or name, f.detail)
-                elif f.action == "recorded":
-                    pos = broker.position(f.position_id)
-                    if pos and self.journal is not None:
-                        record_position(self.journal, name, pos)
-                    self.alert("warning", f"{name} {f.market} : {f.detail}")
-                else:                                   # alert | adopted
-                    self.alert("warning", f"{name} {f.market} : {f.detail}",
-                               key=f"reco:{name}:{f.position_id or f.market}:{f.action}")
+                # T10 : chaque constat est isolé (règle 5) : une erreur sur l'un n'empêche
+                # jamais de traiter les suivants ni l'autre plateforme
+                try:
+                    self._apply_finding(name, broker, f)
+                except Exception as exc:  # noqa: BLE001
+                    self.alert("critical", f"{name} {f.market} : constat de réconciliation non "
+                                           f"traité ({type(exc).__name__}: {exc})",
+                               key=f"reco_err:{name}:{f.position_id or f.market}")
+                    self._pause(f.market or name, "constat de réconciliation non traité")
+
+    def _apply_finding(self, name: str, broker, f) -> None:
+        if f.action == "pause_platform":
+            for m in self.settings.markets:
+                if m.platform == name:
+                    self._pause(m.symbol, f.detail)
+        elif f.action == "pause_market":
+            self._pause(f.market or name, f.detail)
+        elif f.action == "recorded":
+            pos = broker.position(f.position_id)
+            if pos and self.journal is not None:
+                record_position(self.journal, name, pos)
+            self.alert("warning", f"{name} {f.market} : {f.detail}")
+        else:                                   # alert | adopted
+            self.alert("warning", f"{name} {f.market} : {f.detail}",
+                       key=f"reco:{name}:{f.position_id or f.market}:{f.action}")
 
     # --- arrêt d'urgence, pause et reprise (commandes du propriétaire, étape 8) --------------
 
@@ -606,8 +617,9 @@ class Engine:
             # les demandes restent en mémoire et sont fusionnées par _reload_control
             return
         with self._lock:                        # A4 : jamais sérialisé pendant une écriture
-            data = json.dumps(self.control)
-        self._j("set_state", "engine", data)
+            # R14 : écrit AUSSI sous verrou : un état plus ancien ne peut jamais remplacer un
+            # arrêt d'urgence demandé entre-temps par Telegram
+            self._j("set_state", "engine", json.dumps(self.control))
 
     def paused_markets(self) -> dict[str, str]:
         """Copie des pauses par marché (lecture depuis un autre fil)."""

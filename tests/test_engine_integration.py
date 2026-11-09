@@ -864,3 +864,50 @@ def test_r11_unreadable_journal_during_cycles_does_not_flood_alerts(tmp_path):
         eng.cycle()
     floods = [m for _lvl, m in alerts if "journal indisponible" in m]
     assert 1 <= len(floods) <= 3, floods
+
+
+def test_audit10_a_failing_reconciliation_finding_does_not_skip_the_others(tmp_path, monkeypatch):
+    """Audit trading n° 10 : un constat qui lève n'empêche pas de traiter les suivants."""
+    from types import SimpleNamespace
+
+    from tradebot import engine as engine_module
+
+    broker, eng, _journal, alerts = _with_positions(tmp_path, n=0)
+    findings = [SimpleNamespace(action="recorded", market="ETHUSDT", detail="x",
+                                position_id="perdu"),
+                SimpleNamespace(action="pause_market", market="SOLUSDT", detail="avoir",
+                                position_id="")]
+    monkeypatch.setattr(engine_module, "reconcile", lambda rows, brokers: findings)
+    broker.position = lambda pid: (_ for _ in ()).throw(ValueError("stop du mauvais côté"))
+    eng._reconcile()
+    assert "SOLUSDT" in eng.paused and "ETHUSDT" in eng.paused
+    assert any("non traité" in m for _, m in alerts)
+
+
+def test_r14_emergency_requested_during_a_state_write_survives_restart(tmp_path):
+    """Testeur adverse R14 : /urgence pendant l'écriture de l'état par le moteur."""
+    import threading
+
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    eng = Engine(SETTINGS, journal, connectors={}, alert=lambda *_: None, clock=lambda: 1e9)
+    eng.request_emergency_stop("1re demande")
+    in_write, go = threading.Event(), threading.Event()
+    real = journal.set_state
+
+    def slow(key, value):
+        if key == "engine" and threading.current_thread().name == "moteur":
+            in_write.set()
+            go.wait(5)
+        return real(key, value)
+    journal.set_state = slow
+    t = threading.Thread(target=eng._emergency_close, name="moteur")
+    t.start()
+    assert in_write.wait(5)
+    asker = threading.Thread(target=eng.request_emergency_stop, args=("Telegram",))
+    asker.start()
+    go.set()
+    t.join(5)
+    asker.join(5)
+    restarted = Engine(SETTINGS, journal, connectors={}, alert=lambda *_: None,
+                       clock=lambda: 1e9)
+    assert restarted.control["emergency"] is True
