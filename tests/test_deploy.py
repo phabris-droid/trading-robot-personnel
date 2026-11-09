@@ -144,3 +144,9 @@ def test_caddy_forces_https_and_hides_health():
     caddy = _read("Caddyfile")
     assert "Strict-Transport-Security" in caddy and "respond /health 404" in caddy
     assert "reverse_proxy 127.0.0.1:8080" in caddy
+
+
+def test_ssh_is_limited_to_the_robot_accounts():
+    """Audit sécurité n° 14 : aucun autre compte (ex. « ubuntu ») ne peut se connecter."""
+    assert "AllowUsers trader deploy" in _read("harden_vps.sh")
+    assert "AllowUsers" in _read("audit_vps.sh")

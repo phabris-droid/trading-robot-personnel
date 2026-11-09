@@ -37,6 +37,7 @@ echo "Audit du VPS — $(date -u '+%Y-%m-%d %H:%M UTC') — lecture seule"
 check "SSH : mot de passe désactivé" sshd_is passwordauthentication no
 check "SSH : connexion root interdite" sshd_is permitrootlogin no
 check "SSH : clé publique acceptée" sshd_is pubkeyauthentication yes
+if sshd -T 2>/dev/null | grep -qi "^allowusers "; then pass "SSH : comptes autorisés limités (AllowUsers)"; else warn "SSH : aucun AllowUsers (tout compte avec une clé peut se connecter)"; fi
 check "utilisateur $APP_USER présent" id "$APP_USER"
 if systemctl list-timers --all 2>/dev/null | grep -q tradebot-ssh-rollback; then
   warn "SSH : retour automatique encore programmé (confirmer avec harden_vps.sh --confirm-ssh)"

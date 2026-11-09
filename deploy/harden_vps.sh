@@ -162,6 +162,7 @@ KbdInteractiveAuthentication no
 PermitRootLogin no
 PubkeyAuthentication yes
 MaxAuthTries 3
+AllowUsers trader deploy
 EOF
 )"
 rm -f "$SSHD_DROPIN_OLD"
