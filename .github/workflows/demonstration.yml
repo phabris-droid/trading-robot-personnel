@@ -36,6 +36,9 @@ jobs:
         run: |
           # code de sortie 1 si un marché est « A_REVOIR » : c'est un résultat, pas une panne
           python scripts/validate_markets.py | tee validation.txt || true
+          grep -E '^(OK|A_REVOIR) ' validation.txt | while IFS= read -r line; do
+            echo "::notice title=Validation 12 mois::${line}"
+          done
       - name: Détail des marchés Binance (capital de départ 100 $)
         run: |
           for s in BTCUSDT ETHUSDT SOLUSDT; do
@@ -76,7 +79,16 @@ jobs:
         run: python scripts/simulate.py --months 6 --capital 100 --out simulation.md
       - name: Résumé
         if: always()
-        run: cat simulation.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+        run: |
+          cat simulation.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          # chiffres clés aussi en annotations (lisibles sans être connecté)
+          grep -E '^\| (Capital|Baisse|Trades|Taux|Profit|Série)|^\| [A-Z]{3,}USDT |^- (Disjoncteurs|Erreurs)' \
+            simulation.md 2>/dev/null | head -n 12 | while IFS= read -r line; do
+              echo "::notice title=Comportement::${line}"
+            done
+          grep -E '^- [a-z]+ : ' simulation.md 2>/dev/null | head -n 5 | while IFS= read -r line; do
+              echo "::notice title=Blocages::${line}"
+            done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
