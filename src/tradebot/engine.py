@@ -46,10 +46,6 @@ CANDLES = 300
 Alert = Callable[[str, str], None]
 
 
-def _stderr_alert(level: str, message: str) -> None:
-    log(level, message)
-
-
 class Engine:
     def __init__(self, settings: Settings, journal: Journal | None = None,
                  connectors: dict[str, Callable[[], Any]] | None = None,
@@ -61,7 +57,7 @@ class Engine:
         self.news = news                         # veille : flux RSS + calendrier (NewsCache)
         self.connectors = connectors or {}       # plateforme -> fonction de connexion
         self.brokers: dict[str, Any] = {}        # interface Broker (duck typing)
-        self._alert_out = alert or _stderr_alert
+        self._alert_out = alert or log   # D5 : alerte par défaut unique (JSON)
         self._clock = clock
         self._stop = False
         self.cycles = 0

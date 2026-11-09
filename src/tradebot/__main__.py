@@ -27,11 +27,6 @@ def _start_dashboard(port: int, env: dict, mode: str) -> threading.Thread:
     return thread
 
 
-def _alert(level: str, message: str) -> None:
-    """Alerte avant le démarrage du moteur (Telegram à l'étape 8)."""
-    log(level, message)
-
-
 def _connectors(settings, journal, env) -> dict:
     """Fonctions de connexion des plateformes (relancées toutes les 5 min en cas d'échec).
     Une plateforme sans clés reste simplement déconnectée (alerte, nouvel essai)."""
@@ -61,7 +56,7 @@ def main() -> int:
     env = load_env()          # environnement + .env local, sans rien écraser
     try:
         settings = load_settings(env=env)
-        journal = Journal.from_settings(settings, on_alert=_alert)
+        journal = Journal.from_settings(settings, on_alert=log)
     except (ConfigError, JournalError) as exc:
         log("critical", f"Démarrage refusé : {exc}")
         return 2
@@ -76,7 +71,7 @@ def main() -> int:
     telegram = TelegramService(env.get("TELEGRAM_BOT_TOKEN", ""), owner)
 
     def alert(level: str, message: str) -> None:
-        _alert(level, message)
+        log(level, message)
         if notification_filter(level, message):
             telegram.send(f"[{level.upper()}] {message}")
 
@@ -86,7 +81,7 @@ def main() -> int:
                     alert=alert, analysts=analysts, news=news)
     telegram.commands = Commands(engine, owner, news, ai, audits_dir=settings.storage.audits_dir)
     telegram.start()
-    jobs = Jobs(engine, telegram.send if telegram.enabled else (lambda m: _alert("info", m)),
+    jobs = Jobs(engine, telegram.send if telegram.enabled else (lambda m: log("info", m)),
                 news, ai, env.get("HEALTHCHECKS_URL", ""))
     scheduler = build_scheduler(jobs, settings)
     scheduler.start()

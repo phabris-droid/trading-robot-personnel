@@ -319,10 +319,16 @@ def test_logs_are_one_json_line_per_event(capsys):
     assert second["level"] == "error"
 
 
-def test_engine_default_alert_writes_json(capsys):
-    from tradebot.engine import _stderr_alert
+def test_engine_default_alert_is_the_single_json_logger(capsys):
+    """D5 : une seule fonction d'alerte par défaut (moteur et démarrage), en JSON."""
+    import tradebot.__main__ as entry
+    from tradebot import engine as engine_module
+    from tradebot.logs import log
 
-    _stderr_alert("critical", "journal indisponible")
+    eng = Engine(S, None, connectors={})
+    assert eng._alert_out is log
+    assert not hasattr(engine_module, "_stderr_alert") and not hasattr(entry, "_alert")
+    eng._alert_out("critical", "journal indisponible")
     data = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
     assert data == {"event": "journal indisponible", "level": "critical",
                     "timestamp": data["timestamp"]}
