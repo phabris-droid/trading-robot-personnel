@@ -65,6 +65,8 @@ class Engine:
         self.blocked: set[str] = set()           # marchés bloqués ce cycle (ordre incertain)
         self.equity: dict[str, float] = {}
         self.breakers = Breakers(settings.risk, journal, clock)   # disjoncteurs (CDC §4)
+        # A4 : verrou de l'état de contrôle, modifié aussi par Telegram et le tableau de bord
+        self._lock = threading.RLock()
         self.control = self._load_control()   # arrêt d'urgence, pause globale (persistants)
         # K8 : marché -> raison, pause jusqu'à /reprendre, conservée au redémarrage
         self.paused: dict[str, str] = self.control["markets"]
@@ -100,10 +102,12 @@ class Engine:
             return None
 
     def _pause(self, market: str, reason: str) -> None:
-        if self.paused.get(market) != reason:
+        with self._lock:
+            if self.paused.get(market) == reason:
+                return
             self.paused[market] = reason
             self._save_control()
-            self.alert("critical", f"{market} en pause : {reason}")
+        self.alert("critical", f"{market} en pause : {reason}")
 
     # --- boucle -----------------------------------------------------------------------------
 
@@ -428,38 +432,51 @@ class Engine:
         return base
 
     def _save_control(self) -> None:
-        self._j("set_state", "engine", json.dumps(self.control))
+        with self._lock:                        # A4 : jamais sérialisé pendant une écriture
+            data = json.dumps(self.control)
+        self._j("set_state", "engine", data)
+
+    def paused_markets(self) -> dict[str, str]:
+        """Copie des pauses par marché (lecture depuis un autre fil)."""
+        with self._lock:
+            return dict(self.paused)
 
     def request_emergency_stop(self, reason: str = "demande du propriétaire") -> None:
         """/urgence + /confirmer : fermer TOUTES les positions, réessayer à chaque cycle
         jusqu'à ce que tout soit fermé (CDC §6). Les entrées restent ensuite en pause."""
-        self.control.update(emergency=True, attempts=0, paused=f"arrêt d'urgence ({reason})")
-        self._save_control()
+        with self._lock:
+            self.control.update(emergency=True, attempts=0, paused=f"arrêt d'urgence ({reason})")
+            self._save_control()
         self.alert("critical", f"ARRÊT D'URGENCE demandé ({reason}) : fermeture de toutes les "
                                "positions")
 
     def pause_entries(self, reason: str = "demande du propriétaire") -> None:
         """/pause : plus aucune nouvelle entrée ; les positions ouvertes restent gérées."""
-        self.control["paused"] = reason
-        self._save_control()
+        with self._lock:
+            self.control["paused"] = reason
+            self._save_control()
         self.alert("warning", f"Entrées en pause : {reason}")
 
     def resume_entries(self) -> None:
         """/reprendre : refusé tant qu'un arrêt d'urgence n'a pas tout fermé."""
-        if self.control["emergency"]:
+        with self._lock:
+            refused = self.control["emergency"]
+            if not refused:
+                self.control["paused"] = ""
+                markets = sorted(self.paused)
+                self.paused.clear()             # K8 : /reprendre lève aussi les pauses par marché
+                self._save_control()
+        if refused:
             self.alert("warning", "Reprise refusée : arrêt d'urgence en cours")
             return
-        self.control["paused"] = ""
-        markets = sorted(self.paused)
-        self.paused.clear()                     # K8 : /reprendre lève aussi les pauses par marché
-        self._save_control()
         self.alert("info", "Entrées reprises" + (f" (marchés : {', '.join(markets)})"
                                                  if markets else ""))
 
     def _emergency_close(self) -> None:
         if not self.control["emergency"]:
             return
-        self.control["attempts"] += 1
+        with self._lock:
+            self.control["attempts"] += 1
         for row in self._open_rows():
             broker = self.brokers.get(row["platform"])
             if broker is None:
@@ -473,8 +490,9 @@ class Engine:
                            key=f"urgence:{row['id']}")
         remaining = self._open_rows()
         if not remaining:
-            self.control.update(emergency=False, paused="arrêt d'urgence terminé : reprendre "
-                                                        "manuellement (/reprendre)")
+            with self._lock:
+                self.control.update(emergency=False, paused="arrêt d'urgence terminé : "
+                                    "reprendre manuellement (/reprendre)")
             self.alert("critical", f"Arrêt d'urgence terminé en {self.control['attempts']} "
                                    "tentative(s) : toutes les positions sont fermées")
         elif self.control["attempts"] % self.settings.engine.emergency_alert_every == 0:

@@ -553,3 +553,35 @@ def test_market_pause_survives_restart_and_is_lifted_by_resume(tmp_path):
     assert restarted.paused == {}
     again, _, _ = _engine(tmp_path, broker, journal)
     assert again.paused == {} and again.status() == "actif"
+
+
+def test_control_state_is_safe_across_threads():
+    """A4 : Telegram et le tableau de bord modifient l'état de contrôle pendant que le moteur
+    met des marchés en pause : jamais d'erreur « dictionary changed size during iteration »."""
+    import threading
+
+    eng = Engine(SETTINGS, None, connectors={}, alert=lambda *_: None)
+    errors: list[BaseException] = []
+
+    def worker(k):
+        try:
+            for i in range(300):
+                if k == 0:
+                    eng._pause(f"M{i}", "test")
+                elif k == 1:
+                    eng.resume_entries()
+                elif k == 2:
+                    eng._save_control()
+                    eng.paused_markets()
+                else:
+                    eng.pause_entries("test")
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(k,)) for k in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert eng.paused is eng.control["markets"]
