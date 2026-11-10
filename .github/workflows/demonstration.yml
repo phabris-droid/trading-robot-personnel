@@ -53,6 +53,16 @@ jobs:
             echo "::notice title=Expérience::${line#- }"
           done
           cat experiences.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - name: Veille de référence (propositions, aucune modification)
+        run: |
+          python scripts/reference.py --out reference || true
+          for f in reference/reference-*.md; do
+            [ -f "$f" ] || continue
+            grep -E '^\| [A-Z]{3,}|^- ' "$f" | head -n 10 | while IFS= read -r line; do
+              echo "::notice title=Veille de référence::${line}"
+            done
+            cat "$f" >> "$GITHUB_STEP_SUMMARY"
+          done
       - name: Détail des marchés Binance (capital de départ 100 $)
         run: |
           for s in BTCUSDT ETHUSDT SOLUSDT; do
