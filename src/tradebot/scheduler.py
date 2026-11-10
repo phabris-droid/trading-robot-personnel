@@ -15,6 +15,7 @@ import httpx
 from tradebot.analysts.geopolitics import GeoWatch
 from tradebot.interfaces import reports
 from tradebot.logs import log
+from tradebot.validation import changes, load_verdicts, revalidate, write_verdicts
 
 ANNOUNCE_BEFORE_S = 3600
 AUDIT_CANDLES = 1000          # ~6 semaines : 7 jours audités + fenêtre de chauffe des stratégies
@@ -61,6 +62,36 @@ class Jobs:
                                        candles, settings.storage.audits_dir)
             self.notify(summary)
         self._safe("audit", run)
+        self._safe("revalidation", self.revalidate)
+
+    def history(self, market, start: float, end: float):
+        """Bougies 1 h de 12 mois : Binance par ses données publiques, Capital.com par la
+        session du robot (indisponible = erreur, le marché reste coupé par prudence)."""
+        from tradebot.backtest import binance_history
+
+        settings = self.engine.settings
+        if market.platform == "binance":
+            return binance_history(self._http, settings.platforms.binance.market_data_url,
+                                   market.symbol, start, end)
+        broker = self.engine.brokers.get(market.platform)
+        if broker is None or not hasattr(broker, "history"):
+            raise RuntimeError(f"{market.platform} non connecté")
+        return broker.history(market.symbol, start, end)
+
+    def revalidate(self) -> None:
+        """Garde-fou de rentabilité (2026-11-10) : validation refaite chaque semaine sur les
+        12 derniers mois ; un marché qui n'est plus rentable est coupé en mode réel."""
+        before = load_verdicts(self.engine.validation_path)
+        rows = revalidate(self.engine.settings, self.history, self.engine.now())
+        write_verdicts(rows, self.engine.validation_path)
+        for message in changes(before, rows):
+            self.notify(message)
+        ok = [r["marche"] for r in rows if r["verdict"] == "OK"]
+        self.notify(f"🔎 Validation hebdomadaire (12 mois) : {len(ok)}/{len(rows)} marché(s) "
+                    f"rentable(s){' : ' + ', '.join(ok) if ok else ''}. "
+                    + ("Mode réel : seuls ces marchés sont tradés."
+                       if self.engine.settings.mode == "live"
+                       else "Démo : tous les marchés actifs continuent."))
 
     def watchdog(self) -> None:
         """Alerte si le moteur n'a pas fait de cycle depuis watchdog_minutes (une fois)."""

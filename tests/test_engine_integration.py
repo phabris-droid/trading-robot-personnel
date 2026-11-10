@@ -964,3 +964,30 @@ def test_decision_a4_gold_counts_as_forex_and_closes_for_the_weekend():
             {"platform": "capital", "market": "GOLD"}]
     assert "forex" in br.can_enter("capital", rows, 0)
     assert br.can_enter("binance", rows, 0) is None
+
+
+# --- garde-fou de rentabilité (demande du 2026-11-10) ---------------------------------------------
+
+def test_live_mode_only_trades_markets_validated_ok(tmp_path):
+    """En RÉEL : marché « A_REVOIR », absent ou fichier manquant -> aucune entrée."""
+    import json as _json
+
+    live = SETTINGS.model_copy(update={"mode": "live"})
+    eng = Engine(live, Journal(tmp_path / "tradebot_demo.db", "demo"), connectors={},
+                 alert=lambda *_: None, clock=lambda: 1e9)
+    eng._equity_ts["binance"] = 1e9
+    eng.validation_path = str(tmp_path / "validation.json")
+    assert "absente" in eng._engine_checks("BTCUSDT", "binance")          # pas de fichier
+    (tmp_path / "validation.json").write_text(
+        _json.dumps({"BTCUSDT": "A_REVOIR", "ETHUSDT": "OK"}), encoding="utf-8")
+    assert "A_REVOIR" in eng._engine_checks("BTCUSDT", "binance")
+    assert eng._engine_checks("ETHUSDT", "binance") is None
+
+
+def test_demo_mode_keeps_trading_non_validated_markets(tmp_path):
+    """En DÉMO (argent fictif), tous les marchés continuent pour accumuler des preuves."""
+    eng = Engine(SETTINGS, Journal(tmp_path / "tradebot_demo.db", "demo"), connectors={},
+                 alert=lambda *_: None, clock=lambda: 1e9)
+    eng._equity_ts["binance"] = 1e9
+    eng.validation_path = str(tmp_path / "absent.json")
+    assert eng._engine_checks("BTCUSDT", "binance") is None

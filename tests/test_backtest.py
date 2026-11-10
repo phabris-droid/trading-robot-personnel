@@ -341,3 +341,27 @@ def test_experiments_compare_fees_and_timeframes_without_tuning(data):
     assert len(res) == 4 and all(len(v) == 2 for v in res.values())
     cheap = exp.with_fee(S, "binance", 0.075)
     assert cheap.costs.binance.fee_pct == 0.075 and S.costs.binance.fee_pct == 0.1
+
+
+def test_weekly_revalidation_cuts_unprofitable_markets_and_reports_changes(tmp_path, data):
+    """Garde-fou de rentabilité : revalidation, écriture atomique, messages de changement."""
+    from tradebot.validation import changes, load_verdicts, revalidate, write_verdicts
+
+    def history(market, start, end):
+        if market.platform == "capital":
+            raise RuntimeError("capital non connecté")
+        return data
+    rows = revalidate(S, history, now=T0)
+    by = {r["marche"]: r for r in rows}
+    assert by["EURUSD"]["verdict"] == "A_REVOIR" and "indisponibles" in by["EURUSD"]["note"]
+    assert {r["verdict"] for r in rows} <= {"OK", "A_REVOIR"}
+    path = tmp_path / "validation.json"
+    write_verdicts(rows, path)
+    assert load_verdicts(path) == {r["marche"]: r["verdict"] for r in rows}
+    fake = [{"marche": "BTCUSDT", "verdict": "A_REVOIR", "trades": 40, "profit_factor": 0.8}]
+    assert "coupé" in changes({"BTCUSDT": "OK"}, fake)[0]
+    fake_ok = [{"marche": "ETHUSDT", "verdict": "OK", "trades": 30, "profit_factor": 1.3}]
+    assert "validé" in changes({"ETHUSDT": "A_REVOIR"}, fake_ok)[0]
+    assert changes({"BTCUSDT": "A_REVOIR"}, fake) == []
+    (tmp_path / "bad.json").write_text("{tronqué", encoding="utf-8")
+    assert load_verdicts(tmp_path / "bad.json") is None

@@ -41,6 +41,7 @@ from tradebot.risk.breakers import FOREX_PLATFORMS, Breakers, utc_midnight
 from tradebot.risk.sizing import position_size
 from tradebot.settings import CANDLES_FETCHED, Settings
 from tradebot.strategies import EXITS, REGISTRY
+from tradebot.validation import VALIDATION_PATH, load_verdicts
 
 CANDLES = CANDLES_FETCHED            # ADV3 : même valeur que la validation de config.yaml
 CANDLE_S = 3600                    # bougies 1 h (CDC §3)
@@ -78,6 +79,7 @@ class Engine:
         self._next_candle: dict[str, int] = {}   # A8 : pas de relecture avant la bougie suivante
         self._pending_checked = False             # T3 : ordres « pending » d'avant l'arrêt
         self._equity_ts: dict[str, float] = {}   # T8 : heure de la dernière lecture confirmée
+        self.validation_path = VALIDATION_PATH     # verdicts de la validation historique
         self._seen: dict[str, int] = {}          # dernière bougie vue (copie mémoire)
         self._last_alerts: dict[str, str] = {}
         if threading.current_thread() is threading.main_thread():
@@ -439,6 +441,13 @@ class Engine:
         return value if math.isfinite(value) and value > 0 else self.now()
 
     def _engine_checks(self, symbol: str, platform: str) -> str | None:
+        # garde-fou de rentabilité (2026-11-10) : en RÉEL, seul un marché validé « OK »
+        # (rentable sur 12 mois, frais compris) est tradé ; en démo, tout continue
+        if self.settings.mode == "live":
+            verdicts = load_verdicts(self.validation_path)
+            if verdicts is None or verdicts.get(symbol) != "OK":
+                return (f"marché non validé en mode réel (validation historique : "
+                        f"{(verdicts or {}).get(symbol, 'absente')})")
         # T8 : capital non confirmé récemment (lecture en panne ou « à confirmer ») : les
         # disjoncteurs ne sont plus mesurés -> aucune entrée
         seen = self._equity_ts.get(platform)
