@@ -340,3 +340,32 @@ def test_command_from_another_user_in_the_owner_chat_is_ignored(engine):
     assert cmd.handle(OWNER, "/urgence", user_id="777777") == []
     assert engine.control["emergency"] is False
     assert cmd.handle(OWNER, "/statut", user_id=OWNER)[0].startswith("Mode DEMO")
+
+
+# --- vérification des connexions (jour 1 de la démo) ---------------------------------------------
+
+def test_connection_check_is_read_only_and_never_prints_secrets():
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "check_connections", Path(__file__).parents[1] / "scripts" / "check_connections.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    env = {"TELEGRAM_BOT_TOKEN": "1:jeton-de-test", "TELEGRAM_OWNER_CHAT_ID": "42"}
+    with respx.mock() as m:
+        m.get("https://api.telegram.org/bot1:jeton-de-test/getMe").respond(
+            json={"ok": True, "result": {"username": "tradebot_test_bot"}})
+        sent = m.post("https://api.telegram.org/bot1:jeton-de-test/sendMessage").respond(
+            json={"ok": True})
+        results = mod.run(S, env, httpx.Client())
+    by = {name: (status, detail) for status, name, detail in results}
+    assert by["Telegram"][0] == mod.OK and sent.call_count == 1
+    assert by["Binance"][0] == mod.SKIP and by["Capital.com"][0] == mod.SKIP
+    assert by["Claude (IA)"][0] == mod.SKIP
+    assert all("jeton-de-test" not in d for _, _, d in results)
+    with respx.mock() as m:
+        m.get("https://api.telegram.org/bot1:jeton-de-test/getMe").respond(401)
+        results = mod.run(S, env, httpx.Client())
+    status, _, detail = next(r for r in results if r[1] == "Telegram")
+    assert status == mod.KO and "HTTP 401" in detail and "jeton-de-test" not in detail
