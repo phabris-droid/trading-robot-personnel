@@ -29,7 +29,7 @@ class Jobs:
         self.news, self.ai = news, ai
         self.healthchecks_url = healthchecks_url
         self._http = http or httpx.Client(timeout=10)
-        self._announced: set[tuple[str, float]] = set()
+        self._announced: set[tuple] = set()      # annonces et événements déjà signalés
         self._silent_alerted = False
 
     def _safe(self, name: str, fn) -> None:
@@ -146,9 +146,9 @@ class Jobs:
         # veille géopolitique : chaque événement confirmé est signalé une fois
         geo_cfg = self.engine.settings.analysts.geopolitics
         for ev in GeoWatch(geo_cfg, self.news).events(now):
-            key = ("géopolitique", ev.keyword, ev.ts)
-            if 0 <= now - ev.ts <= geo_cfg.block_hours * 3600 and key not in self._announced:
-                self._announced.add(key)
+            geo_key = ("géopolitique", ev.keyword, ev.ts)
+            if 0 <= now - ev.ts <= geo_cfg.block_hours * 3600 and geo_key not in self._announced:
+                self._announced.add(geo_key)
                 self.notify(f"🌍 Événement géopolitique « {ev.keyword} » ({len(ev.sources)} "
                             f"sources) : {ev.title[:150]} — nouvelles entrées bloquées "
                             f"{geo_cfg.block_hours:g} h")
