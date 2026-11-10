@@ -365,3 +365,44 @@ def test_weekly_revalidation_cuts_unprofitable_markets_and_reports_changes(tmp_p
     assert changes({"BTCUSDT": "A_REVOIR"}, fake) == []
     (tmp_path / "bad.json").write_text("{tronqué", encoding="utf-8")
     assert load_verdicts(tmp_path / "bad.json") is None
+
+
+# --- veille de référence (demande du 2026-11-10) -------------------------------------------------
+
+def test_reference_watch_compares_and_only_proposes_strategies_solid_on_both_halves(
+        tmp_path, data):
+    from tradebot.analysts.benchmark import report, study_market
+
+    s = study_market(data, MARKETS["BTCUSDT"], S)
+    assert s["strategie"] == "breakout" and len(s["alternatives"]) == 2
+    for alt in s["alternatives"]:
+        solid = (alt["trades"] >= S.validation.min_trades and alt["pf1"] >= 1.1
+                 and alt["pf2"] >= 1.1)
+        assert alt["solide"] is solid                # jamais sur un seul échantillon
+    forced = dict(s, alternatives=[{"strategie": "trend_ema", "pf1": 1.3, "pf2": 1.2,
+                                    "trades": 40, "solide": True},
+                                   {"strategie": "mean_reversion", "pf1": 2.0, "pf2": 0.6,
+                                    "trades": 40, "solide": False}])
+    summary, path = report([forced], [("BTCUSDT", 2e9, 1.2), ("XRPUSDT", 9e8, -3.0)],
+                           {"BTCUSDT"}, T0, tmp_path)
+    text = path.read_text(encoding="utf-8")
+    assert "essayer « trend_ema »" in text and "mean_reversion" not in text.split(
+        "## Propositions")[1].split("##")[0]
+    assert "XRPUSDT" in text and "candidat à valider" in text and "(déjà suivi)" in text
+    assert "1 proposition(s)" in summary and "rien n'est modifié" in text
+
+
+def test_binance_top_markets_reads_public_24h_tickers():
+    import httpx as _httpx
+
+    from tradebot.analysts.benchmark import binance_top_markets
+
+    with respx.mock() as m:
+        m.get("https://api.binance.com/api/v3/ticker/24hr").respond(json=[
+            {"symbol": "BTCUSDT", "quoteVolume": "2000000000", "priceChangePercent": "1.5"},
+            {"symbol": "ETHUSDT", "quoteVolume": "900000000", "priceChangePercent": "-2"},
+            {"symbol": "BTCUPUSDT", "quoteVolume": "9e12", "priceChangePercent": "0"},
+            {"symbol": "ETHBTC", "quoteVolume": "5e12", "priceChangePercent": "0"},
+            {"symbol": "BAD", "quoteVolume": None}])
+        top = binance_top_markets(_httpx.Client(), "https://api.binance.com", n=5)
+    assert [t[0] for t in top] == ["BTCUSDT", "ETHUSDT"]

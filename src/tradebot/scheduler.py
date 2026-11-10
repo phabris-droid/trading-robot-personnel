@@ -82,7 +82,13 @@ class Jobs:
         """Garde-fou de rentabilité (2026-11-10) : validation refaite chaque semaine sur les
         12 derniers mois ; un marché qui n'est plus rentable est coupé en mode réel."""
         before = load_verdicts(self.engine.validation_path)
-        rows = revalidate(self.engine.settings, self.history, self.engine.now())
+        histories: dict = {}
+
+        def history(market, start, end):        # téléchargé une fois, partagé avec la veille
+            if market.symbol not in histories:
+                histories[market.symbol] = self.history(market, start, end)
+            return histories[market.symbol]
+        rows = revalidate(self.engine.settings, history, self.engine.now())
         write_verdicts(rows, self.engine.validation_path)
         for message in changes(before, rows):
             self.notify(message)
@@ -92,6 +98,26 @@ class Jobs:
                     + ("Mode réel : seuls ces marchés sont tradés."
                        if self.engine.settings.mode == "live"
                        else "Démo : tous les marchés actifs continuent."))
+        self._safe("veille de référence", lambda: self.benchmark(histories))
+
+    def benchmark(self, histories: dict) -> None:
+        """Veille de référence (2026-11-10) : rapport et propositions, aucune modification."""
+        from tradebot.analysts.benchmark import binance_top_markets, report, study_market
+
+        settings = self.engine.settings
+        studies = []
+        for m in settings.markets:
+            df = histories.get(m.symbol)
+            if m.enabled and df is not None and len(df) > settings.validation.warmup_candles + 2:
+                studies.append(study_market(df, m, settings))
+        try:
+            top = binance_top_markets(self._http, settings.platforms.binance.market_data_url)
+        except Exception as exc:  # noqa: BLE001
+            log("warning", f"veille de référence : classement Binance indisponible ({exc})")
+            top = None
+        summary, _path = report(studies, top, {m.symbol for m in settings.markets},
+                                self.engine.now(), settings.storage.audits_dir)
+        self.notify(summary)
 
     def watchdog(self) -> None:
         """Alerte si le moteur n'a pas fait de cycle depuis watchdog_minutes (une fois)."""
