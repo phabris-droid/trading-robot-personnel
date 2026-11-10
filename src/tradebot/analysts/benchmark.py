@@ -22,6 +22,8 @@ from tradebot import stats
 
 STRATEGIES = ("trend_ema", "mean_reversion", "breakout")
 TOP_MARKETS = 5
+STABLECOINS = frozenset({"USDC", "USD1", "FDUSD", "TUSD", "USDP", "DAI", "BUSD", "USDE", "PYUSD",
+                         "EUR", "EURI", "AEUR", "XUSD", "RLUSD", "U"})
 
 
 def buy_and_hold_pct(df: pd.DataFrame) -> float:
@@ -70,7 +72,9 @@ def binance_top_markets(http, base_url: str, quote: str = "USDT",
     rows = []
     for t in resp.json():
         sym = str(t.get("symbol", ""))
-        if not sym.endswith(quote) or sym.endswith(("UP" + quote, "DOWN" + quote)):
+        base = sym[: -len(quote)] if sym.endswith(quote) else ""
+        # stablecoins (prix fixe à 1 $) et jetons à effet de levier : sans intérêt
+        if not base or base in STABLECOINS or base.endswith(("UP", "DOWN")):
             continue
         try:
             rows.append((sym, float(t["quoteVolume"]), float(t["priceChangePercent"])))

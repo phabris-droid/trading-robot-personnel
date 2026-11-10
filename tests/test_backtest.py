@@ -403,6 +403,7 @@ def test_binance_top_markets_reads_public_24h_tickers():
             {"symbol": "ETHUSDT", "quoteVolume": "900000000", "priceChangePercent": "-2"},
             {"symbol": "BTCUPUSDT", "quoteVolume": "9e12", "priceChangePercent": "0"},
             {"symbol": "ETHBTC", "quoteVolume": "5e12", "priceChangePercent": "0"},
+            {"symbol": "USDCUSDT", "quoteVolume": "9e13", "priceChangePercent": "0"},
             {"symbol": "BAD", "quoteVolume": None}])
         top = binance_top_markets(_httpx.Client(), "https://api.binance.com", n=5)
     assert [t[0] for t in top] == ["BTCUSDT", "ETHUSDT"]
