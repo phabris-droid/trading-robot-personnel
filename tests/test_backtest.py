@@ -317,3 +317,13 @@ def test_behaviour_simulation_runs_the_full_engine_on_candles(tmp_path):
     for p in res["broker"].pos.values():
         assert p["stop"] < p["entry"] < p["target"]
     res["journal"].close()
+
+
+def test_diagnostic_explains_costs_and_exits(data):
+    """scripts/diagnose.py : brut contre net, coût en R, sorties par type."""
+    diag = _script("diagnose")
+    d = diag.diagnose(data, MARKETS["BTCUSDT"], S)
+    assert d["trades"] > 0 and d["pnl_brut"] >= d["pnl_net"]
+    assert d["cout_en_R"] > 0 and set(d["sorties"]) <= {"stop", "objectif", "sortie anticipée",
+                                                         "fin des données"}
+    assert len(diag.lines_for(d)) == 3

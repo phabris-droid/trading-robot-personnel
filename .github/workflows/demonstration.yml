@@ -39,6 +39,13 @@ jobs:
           grep -E '^(OK|A_REVOIR) ' validation.txt | while IFS= read -r line; do
             echo "::notice title=Validation 12 mois::${line}"
           done
+      - name: Diagnostic des marchés à revoir (pourquoi ils perdent)
+        run: |
+          python scripts/diagnose.py --out diagnostic.md || true
+          grep -E '^- ' diagnostic.md 2>/dev/null | head -n 10 | while IFS= read -r line; do
+            echo "::notice title=Diagnostic::${line#- }"
+          done
+          cat diagnostic.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
       - name: Détail des marchés Binance (capital de départ 100 $)
         run: |
           for s in BTCUSDT ETHUSDT SOLUSDT; do
