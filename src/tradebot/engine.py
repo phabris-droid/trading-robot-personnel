@@ -375,6 +375,32 @@ class Engine:
         self._j("save_trade", row["id"], row["platform"], row["market"], row["side"],
                 row["qty"], row["entry"], exit_price, pnl, fees)
         self.alert("info", f"{row['market']} fermée : {reason} (P&L {pnl:+.2f})")
+        if pnl < 0:
+            self._review_loss(row, broker, reason, pnl, fees)
+
+    def _review_loss(self, row: dict, broker, reason: str, pnl: float, fees: float) -> None:
+        """Analyse de chaque trade perdant (2026-11-10) : comment, pourquoi, sources, pistes.
+        Ne bloque jamais une fermeture : en cas d'erreur, simple alerte."""
+        from tradebot.analysts import loss_review as lr
+
+        try:
+            now = self._clock()
+            position = dict(row, closed_ts=now, close_reason=reason,
+                            opened_ts=row.get("opened_ts") or now)
+            candle = lr.entry_candle_ts(row.get("client_id", ""))
+            decisions = (self._j("decisions_for", row["market"], candle) or []
+                         if candle is not None else [])
+            candles = None
+            with suppress(Exception):
+                candles = broker.candles(row["market"], limit=CANDLES)
+            verdict = (load_verdicts(self.validation_path) or {}).get(row["market"])
+            rv = lr.review_loss(position, {"pnl": pnl, "fees": fees}, decisions, candles,
+                                self.news, verdict, now)
+            self._j("set_state", f"{lr.STATE_PREFIX}{row['id']}", lr.to_json(rv))
+            self.alert("warning", lr.message(rv))
+        except Exception as exc:  # noqa: BLE001
+            self.alert("error", f"{row['market']} : analyse de la perte impossible "
+                                f"({type(exc).__name__}: {exc})")
 
     def _decide(self, market) -> None:
         symbol = market.symbol

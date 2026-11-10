@@ -229,6 +229,8 @@ class NewsCache:
                     errors[url] = f"{type(exc).__name__}: {exc}"
             if ok or not feeds:
                 self.geo_ok_ts = self._clock()
+        if self.ai is not None and geo:
+            geo = self._raise_impacts(geo)       # l'IA peut relever un titre géopolitique
         self.geo = geo
         if self.ai is not None:
             news = self._raise_impacts(news)

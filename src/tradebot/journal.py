@@ -466,7 +466,8 @@ class Journal:
 
     def trades_since(self, ts: float) -> list[dict]:
         """Trades clôturés depuis `ts`, avec la stratégie de la position (récents d'abord)."""
-        return self._read("SELECT t.*, COALESCE(p.strategy, '') AS strategy FROM trades t "
+        return self._read("SELECT t.*, COALESCE(p.strategy, '') AS strategy, "
+                          "COALESCE(p.close_reason, '') AS close_reason FROM trades t "
                           "LEFT JOIN positions p ON p.id = t.position_id WHERE t.ts >= ? "
                           "ORDER BY t.ts DESC, t.rowid DESC", (int(ts),))
 
@@ -489,6 +490,18 @@ class Journal:
                           "JOIN signals s ON s.market = d.market AND s.candle_ts = d.candle_ts "
                           "WHERE d.blocked = 1 AND s.candle_ts >= ? ORDER BY s.candle_ts",
                           (int(since_ts),))
+
+    def decisions_for(self, market: str, candle_ts: int) -> list[dict]:
+        """Avis des conseillers sur une bougie (analyse des pertes)."""
+        return self._read("SELECT advisor, blocked, reason FROM decisions WHERE market=? AND "
+                          "candle_ts=? ORDER BY created_ts, rowid", (market, int(candle_ts)))
+
+    def states_with_prefix(self, prefix: str) -> list[str]:
+        """Valeurs des états dont la clé commence par `prefix` (analyses de pertes)."""
+        esc = prefix.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+        rows = self._read("SELECT value FROM meta WHERE key LIKE ? ESCAPE '!'",
+                          (f"state:{esc}%",))
+        return [r["value"] for r in rows]
 
     def filled_orders_without_position(self) -> list[dict]:
         """Cohérence du journal (/pret) : tout ordre exécuté doit avoir sa position."""

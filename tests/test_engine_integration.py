@@ -991,3 +991,26 @@ def test_demo_mode_keeps_trading_non_validated_markets(tmp_path):
     eng._equity_ts["binance"] = 1e9
     eng.validation_path = str(tmp_path / "absent.json")
     assert eng._engine_checks("BTCUSDT", "binance") is None
+
+
+# --- analyse de chaque trade perdant (demande du 2026-11-10) -------------------------------------
+
+def test_each_losing_trade_is_analysed_saved_and_sent(tmp_path):
+    broker, eng, journal, alerts = _with_positions(tmp_path, n=1)
+    row = journal.open_positions()[0]
+    broker.exit_price = lambda pid: row["entry"] * 0.98
+    eng._record_close(row, broker, "stop/objectif plateforme")
+    msgs = [m for lvl, m in alerts if m.startswith("🔍 Analyse de la perte")]
+    assert len(msgs) == 1
+    assert "Pourquoi" in msgs[0] and "Comment l'éviter" in msgs[0] and "Sources" in msgs[0]
+    from tradebot.analysts.loss_review import STATE_PREFIX
+    [saved] = journal.states_with_prefix(STATE_PREFIX)
+    assert '"market": "ETHUSDT"' in saved
+
+
+def test_winning_trade_is_not_analysed(tmp_path):
+    broker, eng, journal, alerts = _with_positions(tmp_path, n=1)
+    row = journal.open_positions()[0]
+    broker.exit_price = lambda pid: row["entry"] * 1.05
+    eng._record_close(row, broker, "objectif")
+    assert not any(m.startswith("🔍") for _, m in alerts)

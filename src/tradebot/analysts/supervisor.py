@@ -14,6 +14,7 @@ Rapport écrit dans data/audits/audit-AAAA-MM-JJ.md ; résumé renvoyé pour Tel
 """
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -143,6 +144,13 @@ def supervise(journal, settings, now: float, candles_by_market: dict[str, pd.Dat
     lines += ["", "## Recommandations (gravité 1 = critique)", ""]
     lines += [f"- [{r.gravity}] {r.text}" for r in recs] or \
         [f"- aucune (jamais de recommandation sous {MIN_SAMPLE} trades)"]
+    # sorties et frais (raison de chaque fermeture enregistrée), même sous 20 trades : ce sont
+    # des OBSERVATIONS, pas des recommandations (CDC §5 : jamais de recommandation sous 20)
+    lines += ["", "## Sorties et frais (observations)", ""]
+    lines += exits_and_costs(trades)
+    lines += ["", "## Analyse des pertes de la période", ""]
+    reviews = loss_reviews(journal, since)
+    lines += summarize_losses(reviews)
     lines += ["", "## Prêt pour le réel ?", "", reports.readiness_message(criteria)]
     path = Path(audits_dir) / f"audit-{day}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,8 +159,49 @@ def supervise(journal, settings, now: float, candles_by_market: dict[str, pd.Dat
     summary = (f"📋 Audit du superviseur : {total['trades']} trades, P&L {total['pnl']:+.2f}, "
                f"profit factor {'—' if pf is None else pf}, {len(recs)} recommandation(s), "
                f"{'PRÊT' if ready else 'PAS PRÊT'} pour le réel. Détail : {path.name}")
+    if reviews:
+        top = summarize_losses(reviews)[1:3]
+        summary += " Pertes : " + " ; ".join(x.lstrip("- ") for x in top)
     return summary, path
 
+
+def exits_and_costs(trades: list[dict]) -> list[str]:
+    """Raisons de sortie (enregistrées à chaque fermeture) et poids des frais."""
+    if not trades:
+        return ["- aucun trade clôturé sur la période"]
+    by_reason: dict[str, list[float]] = {}
+    for t in trades:
+        by_reason.setdefault(t.get("close_reason") or "inconnue", []).append(t["pnl"])
+    lines = [f"- {reason} : {len(p)} trade(s), résultat moyen {sum(p) / len(p):+.2f} $"
+             for reason, p in sorted(by_reason.items(), key=lambda kv: -len(kv[1]))]
+    fees = sum(t.get("fees", 0.0) for t in trades)
+    net = sum(t["pnl"] for t in trades)
+    lines.append(f"- frais payés : {fees:.2f} $ ; résultat avant frais {net + fees:+.2f} $, "
+                 f"après frais {net:+.2f} $"
+                 + (" — les frais transforment un gain en perte" if net < 0 < net + fees
+                    else ""))
+    return lines
+
+
+def loss_reviews(journal, since: float) -> list[dict]:
+    """Analyses de pertes (journal) des trades fermés depuis `since`."""
+    from tradebot.analysts.loss_review import STATE_PREFIX
+
+    out = []
+    for raw in journal.states_with_prefix(STATE_PREFIX):
+        try:
+            r = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(r, dict) and float(r.get("closed_ts", 0)) >= since:
+            out.append(r)
+    return out
+
+
+def summarize_losses(reviews: list[dict]) -> list[str]:
+    from tradebot.analysts.loss_review import summarize
+
+    return summarize(reviews)
 
 def _fmt(s: dict) -> str:
     pf = s["profit_factor"]

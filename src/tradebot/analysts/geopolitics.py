@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from tradebot.analysts.base import Advisor, AdvisorContext, Verdict
 
 STALE_REFRESHES = 3
+AI_THEME = "signalé par l'IA"
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,8 @@ def detect_events(items: list, official: set[str], keywords: list[str], confirm:
     by_kw: dict[str, list] = {}
     for it in items:
         kw = matched_keyword(it.title, keywords)
+        if kw is None and getattr(it, "impact", "normal") == "high":
+            kw = AI_THEME                       # relevé par l'IA : même règle des N sources
         if kw is not None:
             by_kw.setdefault(kw, []).append(it)
     events: list[GeoEvent] = []

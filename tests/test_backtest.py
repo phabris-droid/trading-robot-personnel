@@ -1,5 +1,6 @@
 """Étape 9 (CDC §3, §5, §10) : backtest, validation historique, superviseur."""
 import importlib.util
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -408,3 +409,69 @@ def test_binance_top_markets_reads_public_24h_tickers():
             {"symbol": "BAD", "quoteVolume": None}])
         top = binance_top_markets(_httpx.Client(), "https://api.binance.com", n=5)
     assert [t[0] for t in top] == ["BTCUSDT", "ETHUSDT", "JUPUSDT"]
+
+
+# --- analyse des pertes : causes, sources, pistes ---------------------------------------------
+
+def _pos(**kw):
+    base = {"id": "p1", "market": "BTCUSDT", "strategy": "breakout", "side": "buy", "qty": 1.0,
+            "entry": 100.0, "stop": 98.0, "target": 108.0, "opened_ts": T0 - 10 * 3600,
+            "closed_ts": T0, "close_reason": "stop/objectif plateforme", "client_id":
+            f"BTCUSDT-{int(T0 - 10 * 3600)}"}
+    base.update(kw)
+    return base
+
+
+def _bars(highs):
+    n = len(highs)
+    ts = [T0 - (n - i) * 3600 for i in range(n)]
+    return pd.DataFrame({"ts": ts, "close_ts": [t + 3600 for t in ts], "open": 100.0,
+                         "high": highs, "low": 97.0, "close": 99.0, "volume": 1.0})
+
+
+def test_loss_review_explains_given_back_gain_fees_and_sources():
+    from tradebot.analysts import loss_review as lr
+    from tradebot.analysts.news_watch import CalendarEvent, NewsCache, NewsItem
+
+    cache = NewsCache(S.analysts.news_watch, clock=lambda: T0)
+    cache.news = {"https://www.coindesk.com/rss": [NewsItem(
+        "Exchange hack drains funds", T0 - 3 * 3600, "https://www.coindesk.com/rss", "crypto",
+        "high")]}
+    cache.events = [CalendarEvent("FOMC", "USD", T0 - 2 * 3600, "High")]
+    decisions = [{"advisor": "veille", "blocked": 0, "reason": ""},
+                 {"advisor": "financier", "blocked": 0, "reason": "gain/risque 4.0"}]
+    rv = lr.review_loss(_pos(), {"pnl": -2.2, "fees": 0.2}, decisions, _bars([101, 103, 99]),
+                        cache, "A_REVOIR", T0)
+    assert rv.best_r == pytest.approx(1.5) and "gain_rendu" in rv.causes
+    assert "actualite" in rv.causes and "marche_non_rentable" in rv.causes
+    assert any("coindesk.com" in s for s in rv.sources) and any("FOMC" in s for s in rv.sources)
+    assert rv.r_multiple == pytest.approx(-1.1) and "financier : gain/risque 4.0" in rv.analysts
+    text = lr.message(rv)
+    assert "stop suiveur" in text and "propositions, rien n'est modifié" in text
+    fees = lr.review_loss(_pos(close_reason="sortie anticipée"), {"pnl": -0.1, "fees": 0.3},
+                          [], _bars([100.2]), None, "OK", T0)
+    assert fees.causes[0] == "frais" and "sortie_anticipee" in fees.causes
+    false_start = lr.review_loss(_pos(), {"pnl": -2.0, "fees": 0.1}, [], _bars([100.1, 99]),
+                                 None, "OK", T0)
+    assert false_start.causes == ["faux_depart"]
+    assert lr.entry_candle_ts("BTCUSDT-1790000000") == 1790000000
+    week = lr.summarize([json.loads(lr.to_json(rv)), json.loads(lr.to_json(false_start))])
+    assert "2 perte(s)" in week[0] and any("coindesk.com" in x for x in week)
+
+
+def test_supervisor_reports_exits_costs_and_losses_even_under_20_trades(tmp_path):
+    from tradebot.analysts import loss_review as lr
+
+    j = Journal(tmp_path / "tradebot_demo.db", "demo", clock=lambda: T0)
+    j.open_position("p1", "binance", "BTCUSDT", "buy", 1.0, 100.0, 98.0, 108.0,
+                    client_id="BTCUSDT-1", strategy="breakout")
+    j.close_position("p1", 99.0, "sortie anticipée")
+    j.save_trade("p1", "binance", "BTCUSDT", "buy", 1.0, 100.0, 99.0, -1.2, 0.2)
+    rv = lr.review_loss(_pos(), {"pnl": -1.2, "fees": 0.2}, [], None, None, None, T0)
+    j.set_state(f"{lr.STATE_PREFIX}p1", lr.to_json(rv))
+    summary, path = supervise(j, S, T0 + 60, {}, tmp_path / "audits",
+                              validation_path=tmp_path / "absent.json")
+    text = path.read_text(encoding="utf-8")
+    assert "## Sorties et frais (observations)" in text and "sortie anticipée : 1 trade" in text
+    assert "## Analyse des pertes de la période" in text and "1 perte(s)" in text
+    assert "Pertes :" in summary

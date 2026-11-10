@@ -547,3 +547,14 @@ def test_geo_silent_sources_raise_so_live_blocks():
 def test_geo_feeds_are_https_and_config_is_bounded(tmp_path):
     assert all(u.startswith("https://") for u in G.official_feeds + G.media_feeds)
     assert G.block_hours == 4 and G.confirm_sources == 3
+
+
+def test_geo_headlines_raised_by_the_ai_follow_the_same_confirmation_rule():
+    """Point 7 : l'IA peut relever un titre géopolitique sans mot-clé ; il faut quand même
+    3 sources pour bloquer."""
+    raised = [NewsItem("Ships turned back in the Strait", T0 - 900, MEDIA[i], "macro", "high")
+              for i in range(3)]
+    v = GeoWatch(G, _geo_cache(raised)).review(_ctx())
+    assert v.blocked and "IA" in v.reason
+    one = [NewsItem("Ships turned back", T0 - 900, MEDIA[0], "macro", "high")]
+    assert GeoWatch(G, _geo_cache(one)).review(_ctx()).blocked is False
