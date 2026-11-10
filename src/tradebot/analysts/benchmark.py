@@ -74,7 +74,8 @@ def binance_top_markets(http, base_url: str, quote: str = "USDT",
         sym = str(t.get("symbol", ""))
         base = sym[: -len(quote)] if sym.endswith(quote) else ""
         # stablecoins (prix fixe à 1 $) et jetons à effet de levier : sans intérêt
-        if not base or base in STABLECOINS or base.endswith(("UP", "DOWN")):
+        leveraged = len(base) > 4 and base.endswith(("UP", "DOWN"))   # BTCUP, ETHDOWN… (pas JUP)
+        if not base or base in STABLECOINS or leveraged:
             continue
         try:
             rows.append((sym, float(t["quoteVolume"]), float(t["priceChangePercent"])))
