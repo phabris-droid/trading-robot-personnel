@@ -327,3 +327,17 @@ def test_diagnostic_explains_costs_and_exits(data):
     assert d["cout_en_R"] > 0 and set(d["sorties"]) <= {"stop", "objectif", "sortie anticipée",
                                                          "fin des données"}
     assert len(diag.lines_for(d)) == 3
+
+
+def test_experiments_compare_fees_and_timeframes_without_tuning(data):
+    """scripts/experiments.py : 4 configurations fixées, mesurées sur 2 moitiés."""
+    exp = _script("experiments")
+    four = exp.to_4h(data)
+    assert len(four) <= len(data) // 4 + 1 and (four["ts"] % 14_400 == 0).all()
+    b = four["ts"].iloc[0]
+    block = data[(data["ts"] >= b) & (data["ts"] < b + 14_400)]
+    assert four["high"].iloc[0] == block["high"].max() and len(block) == 4
+    res = exp.run(data, MARKETS["BTCUSDT"], S)
+    assert len(res) == 4 and all(len(v) == 2 for v in res.values())
+    cheap = exp.with_fee(S, "binance", 0.075)
+    assert cheap.costs.binance.fee_pct == 0.075 and S.costs.binance.fee_pct == 0.1

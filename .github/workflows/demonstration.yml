@@ -46,6 +46,13 @@ jobs:
             echo "::notice title=Diagnostic::${line#- }"
           done
           cat diagnostic.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+      - name: Expérience — frais et unité de temps (paramètres inchangés)
+        run: |
+          python scripts/experiments.py --out experiences.md || true
+          grep -E '^- ' experiences.md 2>/dev/null | head -n 6 | while IFS= read -r line; do
+            echo "::notice title=Expérience::${line#- }"
+          done
+          cat experiences.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
       - name: Détail des marchés Binance (capital de départ 100 $)
         run: |
           for s in BTCUSDT ETHUSDT SOLUSDT; do
