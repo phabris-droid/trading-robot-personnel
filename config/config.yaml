@@ -120,6 +120,44 @@ analysts:
       crypto: [BTCUSDT, ETHUSDT, SOLUSDT]
       dollar: [EURUSD, GBPUSD, GOLD]  # choix A5 ; recoupe volontairement la limite « 2 positions
                                       # forex » des disjoncteurs (risk) : double garde, même seuil
+  geopolitics:                     # veille géopolitique (demande du propriétaire, 2026-11-10)
+    enabled: true
+    official_feeds:                # communiqués officiels : comptent double
+      - https://www.whitehouse.gov/news/feed/
+      - https://www.whitehouse.gov/presidential-actions/feed/
+      - https://www.war.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=945&max=10
+      - https://tass.com/rss/v2.xml        # Kremlin (en.kremlin.ru refuse HTTPS)
+    media_feeds:                   # grandes chaînes (CNN n'a pas de flux HTTPS)
+      - https://feeds.nbcnews.com/nbcnews/public/world
+      - https://www.cnbc.com/id/100727362/device/rss/rss.html
+      - https://www.cbsnews.com/latest/rss/world
+      - https://abcnews.go.com/abcnews/internationalheadlines
+      - https://moxie.foxnews.com/google-publisher/world.xml
+      - https://feeds.bbci.co.uk/news/world/rss.xml
+      - https://www.aljazeera.com/xml/rss/all.xml
+      - https://www.france24.com/en/rss
+    keywords:                      # titres en anglais ; « sanction » couvre « sanctions »
+      - tariff
+      - sanction
+      - embargo
+      - blockade
+      - invasion
+      - invade
+      - declares war
+      - declaration of war
+      - martial law
+      - coup
+      - airstrike
+      - air strike
+      - military strike
+      - nuclear strike
+      - nuclear test
+      - mobiliz
+      - capital controls
+      - executive order
+    confirm_sources: 3             # repris par 3 sources distinctes (officielle = 2)…
+    confirm_window_minutes: 60     # …en 1 h : sinon, simple nouvelle de fond
+    block_hours: 4                 # décision du 2026-11-10 : entrées bloquées 4 h
   ai:
     enabled: true
     model: claude-haiku-5-5

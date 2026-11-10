@@ -264,8 +264,28 @@ class AiCfg(Strict):
     timeout_s: float = Field(gt=0, le=60)
 
 
+class GeoCfg(Strict):
+    """Veille géopolitique (demande du propriétaire, 2026-11-10)."""
+    enabled: bool
+    official_feeds: list[str] = Field(max_length=20)       # comptent double
+    media_feeds: list[str] = Field(max_length=30)
+    keywords: list[str] = Field(min_length=1, max_length=200)
+    confirm_sources: int = Field(ge=1, le=10)
+    confirm_window_minutes: int = Field(ge=5, le=1440)
+    block_hours: float = Field(ge=0, le=48)
+
+    @field_validator("official_feeds", "media_feeds")
+    @classmethod
+    def _https(cls, v: list[str]) -> list[str]:
+        for url in v:
+            if not re.match(HTTPS_URL, url):
+                raise ValueError(f"flux non HTTPS ou invalide : {url}")
+        return v
+
+
 class Analysts(Strict):
     news_watch: NewsWatchCfg
+    geopolitics: GeoCfg
     financial: FinancialCfg
     risk: RiskAnalystCfg
     ai: AiCfg

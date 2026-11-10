@@ -12,6 +12,7 @@ from tradebot.analysts import build_analysts
 from tradebot.analysts.base import Advisor, AdvisorContext, Verdict, run_chain
 from tradebot.analysts.claude_ai import ClaudeAdvisor, sanitize
 from tradebot.analysts.financial import FinancialAnalyst
+from tradebot.analysts.geopolitics import GeoWatch
 from tradebot.analysts.news_watch import (
     CalendarEvent,
     NewsCache,
@@ -99,7 +100,7 @@ def test_internal_error_passes_in_demo_but_blocks_in_live():
 
 def test_order_of_the_team_matches_the_cdc():
     chain, _ = build_analysts(S, {})
-    assert [a.name for a in chain] == ["veille", "financier", "risques", "ia"]
+    assert [a.name for a in chain] == ["veille", "géopolitique", "financier", "risques", "ia"]
 
 
 # --- IA Claude -----------------------------------------------------------------------------------
@@ -481,3 +482,68 @@ def test_s10_one_genuine_raise_is_still_accepted():
     ai, _ = _ai('{"impacts": ["normal", "fort", "normal", "normal"]}')
     assert ai.rate_headlines(["a", "Exchange piraté", "c", "d"]) == [
         "normal", "high", "normal", "normal"]
+
+
+# --- veille géopolitique (demande du 2026-11-10) -----------------------------------------------
+
+G = A.geopolitics
+WH = G.official_feeds[0]
+MEDIA = list(G.media_feeds)
+
+
+def _geo_cache(items, now=T0):
+    cache = NewsCache(A.news_watch, clock=lambda: now, geo=G)
+    for it in items:
+        cache.geo.setdefault(it.source, []).append(it)
+    return cache
+
+
+def _item(title, source, minutes_ago):
+    return NewsItem(title, T0 - minutes_ago * 60, source, "macro")
+
+
+def test_geo_background_news_from_a_single_outlet_never_blocks():
+    """Un seul média qui parle de sanctions : nouvelle de fond, aucun blocage."""
+    cache = _geo_cache([_item("France weighs sanctions on Iran", MEDIA[0], 10)])
+    assert GeoWatch(G, cache).review(_ctx()).blocked is False
+
+
+def test_geo_event_confirmed_by_three_sources_blocks_every_market_for_4_hours():
+    items = [_item("US announces new tariffs on China", MEDIA[0], 30),
+             _item("Tariffs: markets brace", MEDIA[1], 20),
+             _item("New tariff wave hits Asia", MEDIA[2], 15)]
+    watch = GeoWatch(G, _geo_cache(items))
+    for symbol in ("BTCUSDT", "EURUSD", "GOLD"):
+        v = watch.review(_ctx(symbol=symbol))
+        assert v.blocked and "tariff" in v.reason and "4 h" in v.reason
+    later = _ctx(now=T0 + 5 * 3600)                       # plus de 4 h après : libre
+    assert GeoWatch(G, _geo_cache(items, now=T0 + 5 * 3600)).review(later).blocked is False
+
+
+def test_geo_official_source_counts_double():
+    """Communiqué officiel (Maison-Blanche) + 1 média dans l'heure = 3 : bloqué."""
+    items = [_item("Executive Order on sanctions against Iran", WH, 40),
+             _item("White House sanctions Iranian oil", MEDIA[3], 10)]
+    v = GeoWatch(G, _geo_cache(items)).review(_ctx())
+    assert v.blocked and "Executive Order" in v.reason
+
+
+def test_geo_mentions_spread_over_hours_are_not_an_event():
+    """3 sources, mais étalées sur 5 h (fenêtre de 60 min) : pas d'événement."""
+    items = [_item("Sanctions debate continues", MEDIA[0], 300),
+             _item("EU sanctions talks", MEDIA[1], 180),
+             _item("New sanctions possible", MEDIA[2], 30)]
+    assert GeoWatch(G, _geo_cache(items)).events(T0) == []
+
+
+def test_geo_silent_sources_raise_so_live_blocks():
+    cache = _geo_cache([], now=T0)
+    late = T0 + 4 * A.news_watch.refresh_minutes * 60
+    with pytest.raises(RuntimeError, match="géopolitique"):
+        GeoWatch(G, cache).review(_ctx(now=late))
+    assert any(v.blocked for v in run_chain([GeoWatch(G, cache)], _ctx(now=late), live=True))
+
+
+def test_geo_feeds_are_https_and_config_is_bounded(tmp_path):
+    assert all(u.startswith("https://") for u in G.official_feeds + G.media_feeds)
+    assert G.block_hours == 4 and G.confirm_sources == 3

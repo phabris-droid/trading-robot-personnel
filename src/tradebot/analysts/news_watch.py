@@ -160,8 +160,11 @@ class NewsCache:
     en cas de panne d'une source."""
 
     def __init__(self, cfg, client: httpx.Client | None = None,
-                 clock: Callable[[], float] = time.time, ai=None):
+                 clock: Callable[[], float] = time.time, ai=None, geo=None):
         self.cfg = cfg
+        self.geo_cfg = geo                 # veille géopolitique (GeoCfg) ou None
+        self.geo: dict[str, list[NewsItem]] = {}
+        self.geo_ok_ts = clock()
         self._http = client or httpx.Client()
         self._clock = clock
         self.ai = ai                       # ClaudeAdvisor : relève les impacts (budget veille)
@@ -211,9 +214,29 @@ class NewsCache:
             self.calendar_ok_ts = self._clock()
         except Exception as exc:  # noqa: BLE001
             errors["calendrier"] = f"{type(exc).__name__}: {exc}"
+        geo = dict(self.geo)
+        if self.geo_cfg is not None and self.geo_cfg.enabled:
+            feeds = list(self.geo_cfg.official_feeds) + list(self.geo_cfg.media_feeds)
+            ok = False
+            for url in feeds:
+                try:
+                    raw = fetch_limited(self._http, url, self.cfg.feed_max_bytes,
+                                        self.cfg.feed_timeout_s)
+                    geo[url] = parse_feed(raw, url, list(self.geo_cfg.keywords))
+                    errors.pop(url, None)
+                    ok = True
+                except Exception as exc:  # noqa: BLE001
+                    errors[url] = f"{type(exc).__name__}: {exc}"
+            if ok or not feeds:
+                self.geo_ok_ts = self._clock()
+        self.geo = geo
         if self.ai is not None:
             news = self._raise_impacts(news)
         self.news, self.events, self.errors = news, events, errors
+
+    def geo_stale_for(self, now: float) -> float:
+        """Veille géopolitique : secondes au-delà de 3 rafraîchissements sans aucune source."""
+        return max(0.0, now - self.geo_ok_ts - STALE_REFRESHES * self.cfg.refresh_minutes * 60)
 
     def stale_for(self, now: float) -> float:
         """Secondes au-delà du délai toléré (3 rafraîchissements) ; 0 si à jour."""

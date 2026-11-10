@@ -12,6 +12,7 @@ from collections.abc import Callable
 
 import httpx
 
+from tradebot.analysts.geopolitics import GeoWatch
 from tradebot.interfaces import reports
 from tradebot.logs import log
 
@@ -85,6 +86,15 @@ class Jobs:
                 self._announced.add(key)
                 self.notify(f"📅 Annonce majeure dans {int((ev.ts - now) // 60)} min : "
                             f"{ev.currency} — {ev.title} (entrées bloquées ±30 min)")
+        # veille géopolitique : chaque événement confirmé est signalé une fois
+        geo_cfg = self.engine.settings.analysts.geopolitics
+        for ev in GeoWatch(geo_cfg, self.news).events(now):
+            key = ("géopolitique", ev.keyword, ev.ts)
+            if 0 <= now - ev.ts <= geo_cfg.block_hours * 3600 and key not in self._announced:
+                self._announced.add(key)
+                self.notify(f"🌍 Événement géopolitique « {ev.keyword} » ({len(ev.sources)} "
+                            f"sources) : {ev.title[:150]} — nouvelles entrées bloquées "
+                            f"{geo_cfg.block_hours:g} h")
 
     def healthcheck(self) -> None:
         last = self.engine.last_cycle_ts
