@@ -155,6 +155,15 @@ analysts:
       - mobiliz
       - capital controls
       - executive order
+      - droits de douane           # titres en français (France 24, AFP…)
+      - blocus
+      - loi martiale
+      - "coup d'état"
+      - frappe militaire
+      - frappes
+      - mobilisation
+      - déclare la guerre
+      - décret présidentiel
     confirm_sources: 3             # repris par 3 sources distinctes (officielle = 2)…
     confirm_window_minutes: 60     # …en 1 h : sinon, simple nouvelle de fond
     block_hours: 4                 # décision du 2026-11-10 : entrées bloquées 4 h

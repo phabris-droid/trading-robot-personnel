@@ -558,3 +558,10 @@ def test_geo_headlines_raised_by_the_ai_follow_the_same_confirmation_rule():
     assert v.blocked and "IA" in v.reason
     one = [NewsItem("Ships turned back", T0 - 900, MEDIA[0], "macro", "high")]
     assert GeoWatch(G, _geo_cache(one)).review(_ctx()).blocked is False
+
+
+def test_geo_french_headlines_are_understood():
+    items = [_item("Washington annonce de nouveaux droits de douane", MEDIA[i], 10)
+             for i in range(3)]
+    v = GeoWatch(G, _geo_cache(items)).review(_ctx())
+    assert v.blocked and "droits de douane" in v.reason

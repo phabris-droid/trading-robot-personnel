@@ -475,3 +475,12 @@ def test_supervisor_reports_exits_costs_and_losses_even_under_20_trades(tmp_path
     assert "## Sorties et frais (observations)" in text and "sortie anticipée : 1 trade" in text
     assert "## Analyse des pertes de la période" in text and "1 perte(s)" in text
     assert "Pertes :" in summary
+
+
+def test_reference_watch_shows_gross_profit_factor_and_cost_per_trade(tmp_path, data):
+    from tradebot.analysts.benchmark import report, study_market
+
+    s = study_market(data, MARKETS["BTCUSDT"], S)
+    assert s["pf_brut"] >= s["pf"] and s["cout_r"] > 0
+    _summary, path = report([s], None, {"BTCUSDT"}, T0, tmp_path)
+    assert "PF avant frais" in path.read_text(encoding="utf-8")

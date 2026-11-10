@@ -19,6 +19,7 @@ from pathlib import Path
 import pandas as pd
 
 from tradebot import stats
+from tradebot.strategies.indicators import atr
 
 STRATEGIES = ("trend_ema", "mean_reversion", "breakout")
 TOP_MARKETS = 5
@@ -46,8 +47,16 @@ def study_market(df: pd.DataFrame, market, settings) -> dict:
     v = settings.validation
     split = float(df["ts"].iloc[len(df) // 2])
     current = run_backtest_real(df, market, settings)
+    costs = settings.costs.of(market.platform)
+    stop_atr = settings.strategies.params(market.strategy)["stop_atr"]
+    atr_pct = float((atr(df, settings.strategies.atr_period) / df["close"]).median() * 100)
     out = {"marche": market.symbol, "strategie": market.strategy,
            "pf": current.profit_factor, "trades": current.n,
+           # diagnostic des pertes (point 6) : rentable avant frais ? coût d'un trade en R
+           "pf_brut": stats.profit_factor([t.pnl + t.fees + t.financing
+                                           for t in current.trades]),
+           "cout_r": (2 * costs.fee_pct + costs.spread_pct) / (stop_atr * atr_pct)
+           if atr_pct > 0 else 0.0,
            "rendement_pct": current.pnl / v.start_equity * 100,
            "garder_pct": buy_and_hold_pct(df), "alternatives": []}
     for name in STRATEGIES:
@@ -94,11 +103,13 @@ def report(studies: list[dict], top: list[tuple[str, float, float]] | None, trad
     lines = [f"# Veille de référence — {day}", "",
              "Rapport seulement : rien n'est modifié sans l'accord du propriétaire.", "",
              "## Nos stratégies face au simple « acheter et garder » (12 mois)", "",
-             "| Marché | Stratégie | PF | Trades | Résultat | Acheter et garder |",
-             "|---|---|---|---|---|---|"]
+             "| Marché | Stratégie | PF | PF avant frais | Coût par trade | Trades | Résultat | "
+             "Acheter et garder |",
+             "|---|---|---|---|---|---|---|---|"]
     proposals: list[str] = []
     for s in studies:
-        lines.append(f"| {s['marche']} | {s['strategie']} | {_pf(s['pf'])} | {s['trades']} | "
+        lines.append(f"| {s['marche']} | {s['strategie']} | {_pf(s['pf'])} | "
+                     f"{_pf(s.get('pf_brut', s['pf']))} | {s.get('cout_r', 0.0):.2f} R | {s['trades']} | "
                      f"{s['rendement_pct']:+.1f} % | {s['garder_pct']:+.1f} % |")
         for alt in s["alternatives"]:
             if alt["solide"]:
