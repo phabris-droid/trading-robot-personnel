@@ -937,3 +937,12 @@ def test_r06_commission_dust_is_not_an_unexplained_balance(mock, bn):
     mock.get(host=DEMO, path="/api/v3/account").respond(
         json=_account(btc_free="0.01", btc_locked="0.00122"))
     assert bn.untracked_balances() == {"BTC": pytest.approx(0.01)}   # vrai avoir inexpliqué
+
+
+def test_trailing_stop_replaces_the_oco_with_the_new_stop(mock, bn):
+    oco = _open(mock, bn)
+    _close_routes(mock, btc_free="0.00122")
+    assert bn.update_stop("t1", 59500.0) == "replaced"
+    assert oco.call_count == 2
+    assert _params(oco.calls.last)["belowStopPrice"] == "59500"
+    assert bn.position("t1")["stop"] == 59500.0

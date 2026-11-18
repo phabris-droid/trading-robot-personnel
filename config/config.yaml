@@ -60,6 +60,10 @@ risk:
   max_forex_positions: 2
   max_trades_per_day: 10
   equity_drop_confirm_pct: 10.0    # chute à confirmer au cycle suivant
+  trailing_stop:                   # P2 du CDC : stop suiveur après 1 R de gain
+    enabled: true
+    activate_r: 1.0                # à +1 R, le stop remonte au prix d'entrée…
+    trail_r: 1.0                   # …puis suit le meilleur prix à 1 R (jamais en arrière)
 
 analysts:
   news_watch:

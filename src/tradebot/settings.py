@@ -174,6 +174,14 @@ class Strategies(Strict):
 
 # --- Risque (CDC §4) ------------------------------------------------------------------------
 
+class TrailingStopCfg(Strict):
+    """Stop suiveur (P2 du CDC) : actif après `activate_r` R de gain, puis suit le meilleur prix
+    à `trail_r` R ; ne recule jamais. R = distance initiale entre l'entrée et le stop."""
+    enabled: bool
+    activate_r: float = Field(ge=0.5, le=5)
+    trail_r: float = Field(ge=0.25, le=5)
+
+
 class Risk(Strict):
     risk_per_trade_pct: float = Field(ge=0.01, le=5)
     max_position_pct: float = Field(gt=0, le=100)
@@ -185,6 +193,7 @@ class Risk(Strict):
     max_forex_positions: int = Field(ge=1, le=10)
     max_trades_per_day: int = Field(ge=1, le=100)
     equity_drop_confirm_pct: float = Field(ge=1, le=50)
+    trailing_stop: TrailingStopCfg
 
     @model_validator(mode="after")
     def _coherence(self) -> Risk:

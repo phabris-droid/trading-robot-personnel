@@ -566,3 +566,14 @@ def test_p2_equity_of_a_eur_account_is_converted_to_usd(mock, cap):
     mock.get(host=HOST, path="/api/v1/markets/USDXYZ").respond(404, json={"errorCode": "x"})
     with pytest.raises(BrokerError):
         cap.usd_rate("XYZ")
+
+
+def test_trailing_stop_is_moved_at_capital_by_put(mock, cap):
+    pid, _ = _open(mock, cap)
+    put = mock.put(host=HOST, path=f"/api/v1/positions/{pid}").respond(
+        json={"dealReference": "u_1"})
+    _confirm(mock, ref="u_1")
+    assert cap.update_stop(pid, 1.0801) == "replaced"
+    import json as _json
+    assert _json.loads(put.calls.last.request.content)["stopLevel"] == 1.0801
+    assert cap.position(pid)["stop"] == 1.0801

@@ -603,6 +603,21 @@ class CapitalCFD(Broker):
             self._delete(pos)                 # en cas d'échec, l'erreur remonte : réessayer
             return "closed_no_stop"
 
+    def update_stop(self, position_id: str, new_stop: float) -> StopStatus:
+        """Stop suiveur (P2) : stop de la position modifié chez Capital.com (PUT, objectif
+        inchangé). En cas de refus, l'ancien stop reste en place chez la plateforme."""
+        pos = self._positions[position_id]
+        if pos.status == "closed":
+            return "closed_by_platform"
+        old = pos.stop
+        pos.stop = float(new_stop)
+        try:
+            self._put_stop(pos)
+        except BrokerError:
+            pos.stop = old
+            raise
+        return "replaced"
+
     def close_position(self, position_id: str) -> None:
         pos = self._positions[position_id]
         if pos.status == "closed":

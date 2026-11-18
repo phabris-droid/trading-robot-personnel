@@ -813,6 +813,35 @@ class BinanceSpot(Broker):
                                                f"position suivie {pos.qty}")
         return "replaced"
 
+    def update_stop(self, position_id: str, new_stop: float) -> StopStatus:
+        """Stop suiveur (P2) : l'OCO est annulé puis reposé avec le nouveau stop (même
+        objectif). Une exécution vue entre-temps fait foi (« closed_by_platform »). Si le nouvel
+        OCO ne peut pas être posé, l'erreur remonte : le stop logiciel reste actif et
+        ensure_stop le repose au cycle suivant (sinon vente, CDC §6)."""
+        pos = self._positions[position_id]
+        if pos.status == "closed":
+            return "closed_by_platform"
+        if pos.status != "open" or not pos.oco_id:
+            raise StopNotPlaced(pos.id, closed=False, cause="position non protégée : stop "
+                                                           "suiveur reporté")
+        try:
+            self._request("DELETE", self.trading_url, EP_ORDER_LIST,
+                          {"symbol": pos.symbol, "listClientOrderId": pos.oco_id},
+                          signed=True, kind="cancel")
+        except ApiError as exc:
+            if exc.code not in CODES_NOT_FOUND:
+                raise
+        filled = self._oco_fill(pos.oco_id)
+        if filled and self._consume_exit(pos, _dec(filled.get("executedQty")) or Decimal(0),
+                                         filled):
+            return "closed_by_platform"
+        pos.status = "unprotected"
+        pos.stop = float(new_stop)
+        f = self.filters(pos.symbol)
+        held = f.floor_qty(min(pos.qty, self._robot_free(pos, f)))
+        self._place_oco(pos, held)
+        return "replaced"
+
     def close_position(self, position_id: str) -> None:
         """Annule l'OCO puis vend. Ne déclare JAMAIS la position fermée sans avoir vu une
         vente exécutée ou l'exécution de l'OCO (CDC §6)."""

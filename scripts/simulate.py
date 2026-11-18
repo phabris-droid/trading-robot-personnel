@@ -108,6 +108,14 @@ class PaperBroker:
                     break
         self._checked = now
 
+    def update_stop(self, pid, new_stop):
+        """Stop suiveur : le nouveau stop vaut pour les bougies suivantes."""
+        p = self.pos[pid]
+        if p["closed"]:
+            return "closed_by_platform"
+        p["stop"] = new_stop
+        return "replaced"
+
     def ensure_stop(self, pid):
         return "closed_by_platform" if self.pos[pid]["closed"] else "ok"
 

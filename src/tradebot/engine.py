@@ -327,6 +327,8 @@ class Engine:
                 if status == "replaced":
                     self.alert("warning", f"{row['market']} : stop reposé chez la plateforme")
                     self._save_protection(row, broker)
+                if self._trail(row, broker) == "closed_by_platform":
+                    continue                        # constaté et enregistré au cycle suivant
                 reason = self._exit_reason(row, broker)
                 if reason:
                     broker.close_position(row["id"])
@@ -353,6 +355,45 @@ class Engine:
             self.alert("critical", f"{row['market']} : stop logiciel franchi mais fermeture "
                                    f"impossible ({type(exc).__name__}: {exc})",
                        key=f"swstop:{row['id']}")
+
+    def _trail(self, row: dict, broker) -> str | None:
+        """Stop suiveur (P2 du CDC) : à +activate_r R de gain, le stop remonte (au prix
+        d'entrée pour 1 R), puis suit le meilleur prix à trail_r R ; il ne recule jamais.
+        R = distance initiale entrée-stop, gardée dans le journal (redémarrage compris)."""
+        cfg = self.settings.risk.trailing_stop
+        if not cfg.enabled or not hasattr(broker, "update_stop"):
+            return None
+        key = f"trail:{row['id']}"
+        state: dict = {}
+        with suppress(ValueError, TypeError):
+            state = json.loads(self._j("get_state", key) or "{}") or {}
+        buy = row["side"] == "buy"
+        entry, stop = float(row["entry"]), float(row["stop"])
+        r = float(state.get("r") or abs(entry - stop))
+        if r <= 0:
+            return None
+        bid, ask = broker.quote(row["market"])
+        price = bid if buy else ask
+        best = float(state.get("best", entry))
+        best = max(best, price) if buy else min(best, price)
+        if state.get("best") != best or state.get("r") != r:
+            self._j("set_state", key, json.dumps({"r": r, "best": best}))
+        gain = (best - entry) if buy else (entry - best)
+        if gain < cfg.activate_r * r:
+            return None
+        new = best - cfg.trail_r * r if buy else best + cfg.trail_r * r
+        better = new > stop + 0.1 * r if buy else new < stop - 0.1 * r
+        valid = new < price if buy else new > price
+        if not (better and valid):
+            return None
+        status = broker.update_stop(row["id"], new)
+        if status == "closed_by_platform":
+            return status
+        self._j("update_stop", row["id"], new)
+        row["stop"] = new
+        self.alert("info", f"{row['market']} : stop suiveur déplacé à {new:.6g} (gain "
+                           f"protégé : +{(new - entry if buy else entry - new) / r:.1f} R)")
+        return status
 
     def _save_protection(self, row: dict, broker) -> None:
         """M2 : nouvel identifiant de l'OCO reposé enregistré dans le journal (sinon, au

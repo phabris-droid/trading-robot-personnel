@@ -1046,3 +1046,43 @@ def test_p2_non_usd_account_is_converted_not_paused():
     eng._connect(int(1e9))
     assert eng.paused == {}
     assert any(lvl == "info" and "converti" in msg for lvl, msg in alerts)
+
+
+# --- stop suiveur (P2 du cahier des charges) ------------------------------------------------------
+
+class TrailBroker:
+    def __init__(self):
+        self.price, self.updates, self.closed = 100.0, [], False
+
+    def quote(self, symbol):
+        return self.price, self.price + 0.01
+
+    def update_stop(self, pid, new):
+        self.updates.append(new)
+        return "replaced"
+
+
+def test_trailing_stop_moves_to_break_even_at_1r_then_follows_and_never_goes_back(tmp_path):
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    journal.open_position("t1", "binance", "BTCUSDT", "buy", 1.0, 100.0, 98.0, 110.0,
+                          client_id="BTCUSDT-1", strategy="breakout")
+    eng = Engine(SETTINGS, journal, connectors={}, alert=lambda *_: None, clock=lambda: 1e9)
+    b = TrailBroker()
+    row = journal.open_positions()[0]
+    b.price = 101.0                                    # +0,5 R : rien
+    eng._trail(row, b)
+    assert b.updates == []
+    b.price = 102.0                                    # +1 R : stop au prix d'entrée
+    eng._trail(row, b)
+    assert b.updates == [pytest.approx(100.0)] and journal.open_positions()[0]["stop"] == 100.0
+    b.price = 105.0                                    # +2,5 R : stop à 103 (1 R sous 105)
+    eng._trail(journal.open_positions()[0], b)
+    assert b.updates[-1] == pytest.approx(103.0)
+    b.price = 104.0                                    # repli : le stop ne recule jamais
+    eng._trail(journal.open_positions()[0], b)
+    assert len(b.updates) == 2 and journal.open_positions()[0]["stop"] == pytest.approx(103.0)
+    restarted = Engine(SETTINGS, journal, connectors={}, alert=lambda *_: None,
+                       clock=lambda: 1e9)                # R initial gardé au redémarrage
+    b.price = 106.0
+    restarted._trail(journal.open_positions()[0], b)
+    assert b.updates[-1] == pytest.approx(104.0)

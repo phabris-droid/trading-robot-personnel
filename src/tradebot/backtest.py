@@ -132,6 +132,18 @@ def run_backtest(candles: pd.DataFrame, market, settings, start_equity: float = 
             elif exit_fn(window, {"side": pos["side"]}, params, atr_n):
                 close(float(nxt["open"]), nxt["ts"], "sortie anticipée")
                 exited_now = True
+            elif risk.trailing_stop.enabled:
+                # stop suiveur (P2), comme le moteur : meilleur prix de CLÔTURE (prudent), stop
+                # remonté à partir de activate_r R de gain, jamais en arrière
+                tcfg, r = risk.trailing_stop, pos["r"]
+                price = float(bar["close"])
+                pos["best"] = max(pos["best"], price) if buy else min(pos["best"], price)
+                gain = pos["best"] - pos["entry"] if buy else pos["entry"] - pos["best"]
+                if r > 0 and gain >= tcfg.activate_r * r:
+                    new = (pos["best"] - tcfg.trail_r * r if buy
+                           else pos["best"] + tcfg.trail_r * r)
+                    if (buy and new > pos["stop"]) or (not buy and new < pos["stop"]):
+                        pos["stop"] = new
         if pos is not None or exited_now:
             continue
         sig = strategy(window, params, list(market.sides), atr_n)
@@ -149,7 +161,8 @@ def run_backtest(candles: pd.DataFrame, market, settings, start_equity: float = 
                                   max_spread_to_stop=risk.max_spread_to_stop, leverage=leverage)
         if qty > 0:
             pos = {"entry_i": i + 1, "entry_ts": int(nxt["ts"]), "side": sig.side, "qty": qty,
-                   "entry": entry, "stop": sig.stop, "target": sig.target, "financing": 0.0}
+                   "entry": entry, "stop": sig.stop, "target": sig.target, "financing": 0.0,
+                   "r": abs(entry - sig.stop), "best": entry}
     if pos is not None:
         close(float(df["close"].iloc[-1]), df["close_ts"].iloc[-1], "fin des données")
     return result
