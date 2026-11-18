@@ -4,6 +4,11 @@ data/*.db
 data/*.db-*
 data/backups/*
 !data/backups/.gitkeep
+# résultats locaux (validation, historique téléchargé, rapports) : jamais versionnés
+data/history/
+data/validation.json
+data/audits/*
+!data/audits/.gitkeep
 __pycache__/
 *.pyc
 .pytest_cache/
