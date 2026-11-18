@@ -1081,6 +1081,9 @@ class TrailBroker:
         self.updates.append(new)
         return "replaced"
 
+    def position(self, pid):                     # OCO reposé : nouvel identifiant
+        return {"oco_id": f"oco-{len(self.updates)}"}
+
 
 def test_trailing_stop_moves_to_break_even_at_1r_then_follows_and_never_goes_back(tmp_path):
     journal = Journal(tmp_path / "tradebot_demo.db", "demo")
