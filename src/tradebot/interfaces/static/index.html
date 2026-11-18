@@ -3,85 +3,287 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tradebot</title>
+<meta name="color-scheme" content="dark light">
+<title>tradebot — tableau de bord</title>
 <style>
-  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e6e6e6; --muted:#9aa3b2;
-          --green:#1f7a3a; --red:#b3261e; --up:#3fb950; --down:#f85149; }
+  /* CDC §7 — aucune ressource externe (CSP default-src 'self') : polices système uniquement */
+  :root {
+    --bg:#0b0d12; --panel:#141821; --panel-2:#1a1f2b; --line:#262c3a; --text:#e8ebf1;
+    --muted:#8d97a8; --accent:#5b8cff; --up:#2fbf71; --down:#f0525a; --warn:#e8a33d;
+    --demo:#1f8a4c; --live:#c62f2f; --shadow:0 1px 2px rgba(0,0,0,.35), 0 8px 24px rgba(0,0,0,.18);
+    --radius:12px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f4f6fa; --panel:#ffffff; --panel-2:#f0f3f8; --line:#e1e6ef; --text:#141821;
+            --muted:#5f6b7d; --shadow:0 1px 2px rgba(20,24,33,.06), 0 8px 24px rgba(20,24,33,.06); }
+  }
   * { box-sizing: border-box; }
-  body { font-family: system-ui, sans-serif; margin: 0; padding: 12px; background: var(--bg);
-         color: var(--text); max-width: 1100px; margin-inline: auto; }
-  header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .badge { padding: .35rem .9rem; border-radius: 6px; font-weight: 800; letter-spacing: .05em; }
-  .demo { background: var(--green); } .live { background: var(--red); }
-  .statut { padding: .3rem .7rem; border: 1px solid var(--line); border-radius: 6px; }
-  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-          margin: 12px 0; }
-  .card, section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-                   padding: 10px; }
-  .card b { display: block; font-size: 1.3rem; margin-top: 4px; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 16px; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* --- en-tête ------------------------------------------------------------------------- */
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+           padding: 14px 16px; background: var(--panel); border: 1px solid var(--line);
+           border-radius: var(--radius); box-shadow: var(--shadow); }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 750; font-size: 1.05rem;
+           letter-spacing: .01em; margin-right: auto; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+          background: linear-gradient(135deg, var(--accent), #8a5bff); color: #fff; }
+  .badge { padding: .3rem .75rem; border-radius: 999px; font-weight: 800; font-size: .8rem;
+           letter-spacing: .08em; color: #fff; }
+  .badge.demo { background: var(--demo); } .badge.live { background: var(--live);
+           animation: pulse 2s infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(198,47,47,.25); } }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: .3rem .75rem;
+          border: 1px solid var(--line); border-radius: 999px; font-size: .88rem;
+          background: var(--panel-2); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--up); box-shadow: 0 0 0 3px rgba(47,191,113,.2); }
+  .dot.warn { background: var(--warn); } .dot.bad { background: var(--down); }
   .muted { color: var(--muted); font-size: .85rem; }
-  section { margin: 12px 0; overflow-x: auto; }
-  h2 { font-size: 1rem; margin: 0 0 8px; }
-  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line);
-           white-space: nowrap; }
+  #erreur { flex-basis: 100%; color: var(--down); font-weight: 600; }
+  #erreur:empty { display: none; }
+
+  /* --- indicateurs --------------------------------------------------------------------- */
+  .kpis { display: grid; gap: 12px; margin: 14px 0;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+          padding: 14px 16px; box-shadow: var(--shadow); min-width: 0; }
+  .card .label { color: var(--muted); font-size: .8rem; text-transform: uppercase;
+                 letter-spacing: .06em; }
+  .card .value { font-size: 1.55rem; font-weight: 750; margin-top: 4px; white-space: nowrap;
+                 overflow: hidden; text-overflow: ellipsis; }
+  .card .sub { color: var(--muted); font-size: .82rem; margin-top: 2px; }
   .pos { color: var(--up); } .neg { color: var(--down); }
-  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-  button { font: inherit; padding: .7rem 1.1rem; border-radius: 6px; border: 1px solid var(--line);
-           background: var(--panel); color: var(--text); cursor: pointer; }
-  button.danger { background: var(--red); border-color: var(--red); color: #fff; font-weight: 700; }
-  svg { width: 100%; height: 180px; display: block; }
-  #erreur { color: var(--down); }
+
+  /* --- mise en page -------------------------------------------------------------------- */
+  .cols { display: grid; gap: 14px; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: start; }
+  @media (max-width: 860px) { .cols { grid-template-columns: minmax(0, 1fr); } }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+            padding: 14px 16px; margin-bottom: 14px; box-shadow: var(--shadow); min-width: 0; }
+  section > h2 { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+                 font-size: .95rem; margin: 0 0 10px; }
+  .count { color: var(--muted); font-weight: 500; font-size: .82rem; }
+  .scroll { overflow-x: auto; }
+
+  /* --- actions ------------------------------------------------------------------------- */
+  .actions { display: grid; gap: 8px; }
+  button { font: inherit; font-weight: 600; padding: .7rem 1rem; border-radius: 10px;
+           border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+           cursor: pointer; transition: filter .15s, transform .05s; }
+  button:hover { filter: brightness(1.12); } button:active { transform: translateY(1px); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.danger { background: var(--live); border-color: var(--live); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* --- courbe -------------------------------------------------------------------------- */
+  .chart { position: relative; }
+  #courbe { width: 100%; height: 220px; display: block; }
+  .chart-legend { display: flex; justify-content: space-between; color: var(--muted);
+                  font-size: .8rem; margin-top: 6px; }
+
+  /* --- tableaux ------------------------------------------------------------------------ */
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: .76rem;
+       text-transform: uppercase; letter-spacing: .05em; padding: 6px 8px;
+       border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .events { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow-y: auto; }
+  .events li { padding: 9px 2px; border-bottom: 1px solid var(--line); }
+  .events li:last-child { border-bottom: 0; }
+  .events .meta { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+  .events .msg { font-size: .87rem; overflow-wrap: anywhere; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--panel-2); }
+  .empty { color: var(--muted); text-align: center; padding: 18px 8px; }
+  .chip { display: inline-block; padding: .1rem .5rem; border-radius: 6px; font-size: .75rem;
+          font-weight: 700; letter-spacing: .03em; }
+  .chip.buy { background: rgba(47,191,113,.15); color: var(--up); }
+  .chip.sell { background: rgba(240,82,90,.15); color: var(--down); }
+  .chip.info { background: rgba(91,140,255,.15); color: var(--accent); }
+  .chip.warning { background: rgba(232,163,61,.18); color: var(--warn); }
+  .chip.error, .chip.critical { background: rgba(240,82,90,.18); color: var(--down); }
+  .chip.plat { background: var(--panel-2); color: var(--muted); font-weight: 600; }
+  .filters { display: flex; gap: 6px; }
+  .filters button { padding: .25rem .6rem; font-size: .78rem; border-radius: 8px; }
+  .filters button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent);
+                                         color: #fff; }
+  .paused-list { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  /* --- fenêtre de confirmation (sans formulaire : CSP form-action 'none') ------------- */
+  dialog { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel);
+           color: var(--text); padding: 20px; width: min(440px, calc(100vw - 32px));
+           box-shadow: var(--shadow); }
+  dialog::backdrop { background: rgba(0,0,0,.55); }
+  dialog h3 { margin: 0 0 8px; } dialog p { margin: 0 0 14px; color: var(--muted); }
+  dialog input { width: 100%; font: inherit; padding: .6rem .7rem; border-radius: 8px;
+                 border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+                 margin-bottom: 14px; }
+  .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  footer { color: var(--muted); font-size: .78rem; text-align: center; padding: 8px 0 20px; }
 </style>
 </head>
 <body>
+<div class="wrap">
+
 <header>
+  <div class="brand">
+    <span class="logo" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 17 9 11 13 15 21 7"/><polyline points="15 7 21 7 21 13"/></svg>
+    </span>
+    tradebot
+  </div>
   <span id="mode" class="badge demo">DÉMO</span>
-  <span id="statut" class="statut">—</span>
-  <span id="maj" class="muted"></span>
-  <span id="erreur"></span>
+  <span class="pill"><span id="statut-dot" class="dot"></span><span id="statut">—</span></span>
+  <span class="pill"><span id="cycle-dot" class="dot"></span><span id="cycle" class="num">cycle —</span></span>
+  <span id="maj" class="muted num"></span>
+  <span id="erreur" role="alert"></span>
 </header>
 
-<div class="grid" id="capitaux"></div>
+<div class="kpis" id="capitaux"></div>
 
-<div class="actions">
-  <button id="pause">Pause</button>
-  <button id="reprendre">Reprendre</button>
-  <button id="urgence" class="danger">ARRÊT D'URGENCE</button>
+<div class="cols">
+  <div>
+    <section>
+      <h2>Courbe du capital <span class="count">7 jours</span></h2>
+      <div class="chart">
+        <svg id="courbe" viewBox="0 0 600 220" preserveAspectRatio="none" role="img"
+             aria-label="Courbe du capital sur 7 jours"></svg>
+        <div class="chart-legend num"><span id="courbe-debut"></span><span id="courbe-fin"></span></div>
+      </div>
+    </section>
+    <section>
+      <h2>Positions ouvertes <span id="nb-positions" class="count"></span></h2>
+      <div class="scroll"><table id="positions"></table></div>
+    </section>
+    <section>
+      <h2>Derniers trades <span id="nb-trades" class="count"></span></h2>
+      <div class="scroll"><table id="trades"></table></div>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>Commandes</h2>
+      <div class="actions">
+        <button id="pause">⏸ Pause des entrées</button>
+        <button id="reprendre">▶ Reprendre</button>
+        <button id="urgence" class="danger">■ ARRÊT D'URGENCE</button>
+      </div>
+      <p class="muted" style="margin:10px 0 0">La pause bloque les nouvelles entrées ; les
+        positions ouvertes gardent leur stop chez la plateforme.</p>
+    </section>
+    <section id="bloc-pause" hidden>
+      <h2>Marchés en pause</h2>
+      <div id="pauses" class="paused-list"></div>
+    </section>
+    <section>
+      <h2>Journal
+        <span class="filters" role="group" aria-label="Filtrer le journal">
+          <button data-filtre="tout" aria-pressed="true">Tout</button>
+          <button data-filtre="alertes" aria-pressed="false">Alertes</button>
+        </span>
+      </h2>
+      <ol id="evenements" class="events"></ol>
+    </section>
+  </div>
 </div>
 
-<section><h2>Courbe du capital (7 jours)</h2><svg id="courbe" viewBox="0 0 600 180"
-  preserveAspectRatio="none" role="img" aria-label="Courbe du capital"></svg></section>
-<section><h2>Positions ouvertes</h2><table id="positions"></table></section>
-<section><h2>50 derniers trades</h2><table id="trades"></table></section>
-<section><h2>Journal d'événements</h2><table id="evenements"></table></section>
+<footer>Données du robot uniquement · aucune ressource externe · rafraîchissement automatique</footer>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlg-titre">
+  <h3 id="dlg-titre"></h3>
+  <p id="dlg-texte"></p>
+  <input id="dlg-saisie" autocomplete="off" hidden>
+  <div class="dlg-actions">
+    <button id="dlg-non">Annuler</button>
+    <button id="dlg-oui"></button>
+  </div>
+</dialog>
 
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const fmt = (n, d = 2) => (n === null || n === undefined) ? "—" : Number(n).toFixed(d);
+const fmt = (n, d = 2) => (n === null || n === undefined || !Number.isFinite(Number(n))) ? "—"
+  : Number(n).toLocaleString("fr-FR", {minimumFractionDigits: d, maximumFractionDigits: d});
+const signe = (n, d = 2) => (Number(n) > 0 ? "+" : "") + fmt(n, d);
 const heure = (ts) => new Date(ts * 1000).toISOString().replace("T", " ").slice(5, 16) + " UTC";
-const txt = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
-  ({"&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;"}[c]));
+const txt = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({"&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"}[c]));
+const DEVISE = {binance: "USDT", capital: "USD"};
+const ALERTES = new Set(["warning", "error", "critical"]);
+let filtre = "tout", derniersEvenements = [];
 
-function table(el, head, rows) {
-  el.innerHTML = "<tr>" + head.map((h) => `<th>${txt(h)}</th>`).join("") + "</tr>" +
-    (rows.length ? rows.map((r) => "<tr>" + r.map((c) => `<td>${c}</td>`).join("") + "</tr>").join("")
-                 : `<tr><td colspan="${head.length}" class="muted">aucun</td></tr>`);
+function sens(s) {
+  const achat = String(s).toLowerCase() === "buy";
+  return `<span class="chip ${achat ? "buy" : "sell"}">${achat ? "ACHAT" : "VENTE"}</span>`;
+}
+
+function table(el, head, rows, alignDroite = []) {
+  const th = head.map((h, i) => `<th${alignDroite.includes(i) ? ' style="text-align:right"' : ""}>${txt(h)}</th>`).join("");
+  const body = rows.length
+    ? rows.map((r) => "<tr>" + r.map((c, i) => {
+        const cls = [alignDroite.includes(i) ? "num" : "", String(c).startsWith("<msg>") ? "msg" : ""].join(" ").trim();
+        const style = alignDroite.includes(i) ? ' style="text-align:right"' : "";
+        return `<td class="${cls}"${style}>${String(c).replace(/^<msg>/, "")}</td>`;
+      }).join("") + "</tr>").join("")
+    : `<tr><td colspan="${head.length}" class="empty">aucun pour l'instant</td></tr>`;
+  el.innerHTML = `<thead><tr>${th}</tr></thead><tbody>${body}</tbody>`;
+}
+
+function carte(label, valeur, sous = "", cls = "") {
+  return `<div class="card"><div class="label">${txt(label)}</div>` +
+         `<div class="value num ${cls}">${valeur}</div>` +
+         (sous ? `<div class="sub">${sous}</div>` : "") + "</div>";
 }
 
 function courbe(points) {
   const svg = $("courbe");
-  if (points.length < 2) { svg.innerHTML = '<text x="10" y="90" fill="#9aa3b2">pas encore de données</text>'; return; }
+  if (points.length < 2) {
+    svg.innerHTML = '<text x="300" y="115" text-anchor="middle" fill="currentColor" opacity=".5" font-size="14">pas encore assez de points</text>';
+    $("courbe-debut").textContent = ""; $("courbe-fin").textContent = "";
+    return;
+  }
   const xs = points.map((p) => p.ts), ys = points.map((p) => p.value);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const marge = (y1 - y0) * 0.1 || 1; y0 -= marge; y1 += marge;
   const sx = (x) => (x - x0) / ((x1 - x0) || 1) * 590 + 5;
-  const sy = (y) => 170 - (y - y0) / ((y1 - y0) || 1) * 160;
-  const d = points.map((p, i) => (i ? "L" : "M") + sx(p.ts).toFixed(1) + " " + sy(p.value).toFixed(1)).join(" ");
-  const couleur = ys[ys.length - 1] >= ys[0] ? "#3fb950" : "#f85149";
-  svg.innerHTML = `<path d="${d}" fill="none" stroke="${couleur}" stroke-width="2"/>` +
-    `<text x="5" y="12" fill="#9aa3b2" font-size="11">${fmt(y1)}</text>` +
-    `<text x="5" y="178" fill="#9aa3b2" font-size="11">${fmt(y0)}</text>`;
+  const sy = (y) => 210 - (y - y0) / ((y1 - y0) || 1) * 200;
+  const ligne = points.map((p, i) => (i ? "L" : "M") + sx(p.ts).toFixed(1) + " " + sy(p.value).toFixed(1)).join(" ");
+  const hausse = ys[ys.length - 1] >= ys[0];
+  const c = hausse ? "#2fbf71" : "#f0525a";
+  let grille = "";
+  for (let i = 0; i <= 4; i++) {
+    const y = 10 + i * 50, v = y1 - (y - 10) / 200 * (y1 - y0);
+    grille += `<line x1="0" x2="600" y1="${y}" y2="${y}" stroke="currentColor" opacity=".08"/>` +
+              `<text x="596" y="${y - 3}" text-anchor="end" fill="currentColor" opacity=".45" font-size="10">${fmt(v)}</text>`;
+  }
+  const dernier = points[points.length - 1];
+  svg.innerHTML =
+    `<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop offset="0" stop-color="${c}" stop-opacity=".35"/><stop offset="1" stop-color="${c}" stop-opacity="0"/></linearGradient></defs>` +
+    grille +
+    `<path d="${ligne} L${sx(x1).toFixed(1)} 215 L${sx(x0).toFixed(1)} 215 Z" fill="url(#g)"/>` +
+    `<path d="${ligne}" fill="none" stroke="${c}" stroke-width="2.2" vector-effect="non-scaling-stroke"/>` +
+    `<circle cx="${sx(dernier.ts).toFixed(1)}" cy="${sy(dernier.value).toFixed(1)}" r="4" fill="${c}"/>`;
+  const variation = ys[ys.length - 1] - ys[0];
+  $("courbe-debut").textContent = heure(x0);
+  $("courbe-fin").innerHTML = `${txt(heure(x1))} · <span class="${hausse ? "pos" : "neg"}">${txt(signe(variation))} (${txt(signe(variation / ys[0] * 100, 1))} %)</span>`;
+}
+
+function journal() {
+  const liste = derniersEvenements.filter((e) => filtre === "tout" || ALERTES.has(e.level));
+  $("evenements").innerHTML = liste.length
+    ? liste.map((e) => `<li><div class="meta"><span class="chip ${txt(e.level)}">${txt(e.level)}</span>` +
+        `<span class="muted num">${txt(heure(e.ts))}</span></div><div class="msg">${txt(e.message)}</div></li>`).join("")
+    : `<li class="empty">aucun événement</li>`;
 }
 
 async function charger() {
@@ -93,41 +295,99 @@ async function charger() {
     const live = s.mode === "live";
     $("mode").textContent = live ? "RÉEL" : "DÉMO";
     $("mode").className = "badge " + (live ? "live" : "demo");
+    document.title = (live ? "RÉEL" : "DÉMO") + " · tradebot";
     $("statut").textContent = s.statut;
+    $("statut-dot").className = "dot " + (s.statut === "actif" ? "ok" : s.statut === "en pause" ? "warn" : "bad");
+    const age = s.dernier_cycle ? Math.max(0, Math.round(s.maintenant - s.dernier_cycle)) : null;
+    $("cycle").textContent = age === null ? "aucun cycle" : `dernier cycle il y a ${age} s`;
+    $("cycle-dot").className = "dot " + (age === null ? "" : age < 180 ? "ok" : age < 300 ? "warn" : "bad");
     $("maj").textContent = "mis à jour " + heure(s.maintenant);
     $("erreur").textContent = "";
-    const cartes = Object.entries(s.capital).map(([k, v]) =>
-      `<div class="card"><span class="muted">Capital ${txt(k)}</span><b>${fmt(v)}</b></div>`);
+
     const p = s.pnl;
-    cartes.push(`<div class="card"><span class="muted">Capital total</span><b>${fmt(s.capital_total)}</b></div>`);
-    cartes.push(`<div class="card"><span class="muted">P&amp;L jour / 7 jours</span><b class="${p.jour >= 0 ? "pos" : "neg"}">${fmt(p.jour)} / ${fmt(p.sept_jours)}</b></div>`);
-    cartes.push(`<div class="card"><span class="muted">Réussite (7 j, ${p.trades_7j} trades)</span><b>${p.reussite_pct === null ? "—" : fmt(p.reussite_pct, 1) + " %"}</b></div>`);
+    const cartes = Object.entries(s.capital).map(([k, v]) =>
+      carte(`Capital ${k}`, fmt(v), txt(DEVISE[k] || "")));
+    cartes.push(carte("Capital total", fmt(s.capital_total), "devises additionnées"));
+    cartes.push(carte("P&L du jour", signe(p.jour), `7 jours : ${txt(signe(p.sept_jours))}`, p.jour >= 0 ? "pos" : "neg"));
+    cartes.push(carte("Réussite 7 j", p.reussite_pct === null ? "—" : fmt(p.reussite_pct, 1) + " %",
+                      `${p.trades_7j} trade${p.trades_7j > 1 ? "s" : ""}`));
+    cartes.push(carte("Positions", String(s.positions.length), "stops chez la plateforme"));
     $("capitaux").innerHTML = cartes.join("");
+
     courbe(s.courbe);
+    $("nb-positions").textContent = s.positions.length ? `${s.positions.length} ouverte(s)` : "";
     table($("positions"), ["Marché", "Sens", "Quantité", "Entrée", "Stop", "Objectif", "Plateforme"],
-      s.positions.map((x) => [txt(x.market), txt(x.side), fmt(x.qty, 6), fmt(x.entry, 5),
-                              fmt(x.stop, 5), fmt(x.target, 5), txt(x.platform)]));
-    table($("trades"), ["Date", "Marché", "Sens", "Quantité", "Entrée", "Sortie", "P&L"],
-      s.trades.map((t) => [heure(t.ts), txt(t.market), txt(t.side), fmt(t.qty, 6), fmt(t.entry, 5),
-                           fmt(t.exit, 5), `<span class="${t.pnl >= 0 ? "pos" : "neg"}">${fmt(t.pnl)}</span>`]));
-    table($("evenements"), ["Date", "Niveau", "Message"],
-      s.evenements.map((e) => [heure(e.ts), txt(e.level), txt(e.message)]));
+      s.positions.map((x) => [`<b>${txt(x.market)}</b>`, sens(x.side), fmt(x.qty, 6), fmt(x.entry, 5),
+                              fmt(x.stop, 5), fmt(x.target, 5), `<span class="chip plat">${txt(x.platform)}</span>`]),
+      [2, 3, 4, 5]);
+    $("nb-trades").textContent = s.trades.length ? `${s.trades.length} affiché(s)` : "";
+    table($("trades"), ["Date", "Marché", "Sens", "Quantité", "Entrée", "Sortie", "Frais", "P&L"],
+      s.trades.map((t) => [txt(heure(t.ts)), `<b>${txt(t.market)}</b>`, sens(t.side), fmt(t.qty, 6),
+                           fmt(t.entry, 5), fmt(t.exit, 5), fmt(t.fees),
+                           `<b class="${t.pnl >= 0 ? "pos" : "neg"}">${txt(signe(t.pnl))}</b>`]),
+      [3, 4, 5, 6, 7]);
+
+    const pauses = Object.entries(s.marches_en_pause || {});
+    $("bloc-pause").hidden = pauses.length === 0;
+    $("pauses").innerHTML = pauses.map(([m, why]) =>
+      `<span class="chip warning" title="${txt(why)}">${txt(m)}</span>`).join("");
+
+    derniersEvenements = s.evenements;
+    journal();
   } catch (err) {
     $("erreur").textContent = "Robot injoignable : " + err.message;
+    $("statut-dot").className = "dot bad";
   }
 }
 
+/* Confirmation : fenêtre intégrée ; l'arrêt d'urgence exige de taper ARRÊT */
+function confirmer(titre, texte, bouton, danger = false, mot = "") {
+  return new Promise((ok) => {
+    const d = $("dlg"), saisie = $("dlg-saisie"), oui = $("dlg-oui");
+    $("dlg-titre").textContent = titre; $("dlg-texte").textContent = texte;
+    oui.textContent = bouton; oui.className = danger ? "danger" : "";
+    saisie.hidden = !mot; saisie.value = ""; saisie.placeholder = mot ? `tapez ${mot}` : "";
+    oui.disabled = Boolean(mot);
+    const sansAccent = (v) => v.normalize("NFD").replace(/[̀-ͯ]/g, "").trim().toUpperCase();
+    saisie.oninput = () => { oui.disabled = sansAccent(saisie.value) !== sansAccent(mot); };
+    const fin = (v) => { d.close(); ok(v); };
+    oui.onclick = () => fin(true); $("dlg-non").onclick = () => fin(false);
+    d.oncancel = () => ok(false);
+    d.showModal();
+    (mot ? saisie : $("dlg-non")).focus();
+  });
+}
+
 async function action(chemin, corps) {
-  const r = await fetch(chemin, {method: "POST", credentials: "same-origin",
-    headers: {"Content-Type": "application/json"}, body: JSON.stringify(corps || {})});
-  if (!r.ok) alert("Échec : HTTP " + r.status);
+  try {
+    const r = await fetch(chemin, {method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify(corps || {})});
+    if (!r.ok) $("erreur").textContent = "Échec de la commande : HTTP " + r.status;
+  } catch (err) {
+    $("erreur").textContent = "Échec de la commande : " + err.message;
+  }
   charger();
 }
 
-$("pause").onclick = () => confirm("Mettre les nouvelles entrées en pause ?") && action("/api/pause");
-$("reprendre").onclick = () => confirm("Reprendre les nouvelles entrées ?") && action("/api/reprendre");
-$("urgence").onclick = () => confirm("ARRÊT D'URGENCE : fermer TOUTES les positions ?") &&
-  confirm("Confirmer une seconde fois l'arrêt d'urgence ?") && action("/api/urgence", {confirmer: true});
+$("pause").onclick = async () => {
+  if (await confirmer("Pause des entrées", "Le robot n'ouvrira plus de position. Les positions ouvertes restent protégées par leur stop.", "Mettre en pause"))
+    action("/api/pause");
+};
+$("reprendre").onclick = async () => {
+  if (await confirmer("Reprendre", "Le robot pourra de nouveau ouvrir des positions.", "Reprendre"))
+    action("/api/reprendre");
+};
+$("urgence").onclick = async () => {
+  if (await confirmer("ARRÊT D'URGENCE", "Toutes les positions seront fermées au marché et les entrées bloquées. Tapez ARRÊT pour confirmer.", "Fermer tout", true, "ARRÊT"))
+    action("/api/urgence", {confirmer: true});
+};
+document.querySelectorAll("[data-filtre]").forEach((b) => {
+  b.onclick = () => {
+    filtre = b.dataset.filtre;
+    document.querySelectorAll("[data-filtre]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    journal();
+  };
+});
 
 // K6 : délai de rafraîchissement lu dans config.yaml (dashboard.refresh_seconds) via /api/state
 let delaiMs = 10000;
