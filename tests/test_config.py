@@ -86,6 +86,10 @@ BAD = {
     "URL Binance non HTTPS": _set(["platforms", "binance"], "trading_url_live",
                                   "http://api.binance.com"),
     "ping Capital trop rare": _set(["platforms", "capital"], "keepalive_minutes", 15),
+    # veille géopolitique (audit du 18 nov.)
+    "mot-clé géopolitique vide": lambda r: r["analysts"]["geopolitics"]["keywords"].append(""),
+    "flux géopolitique en double": lambda r: r["analysts"]["geopolitics"]["media_feeds"].append(
+        r["analysts"]["geopolitics"]["official_feeds"][0]),
     # testeur adverse R16 : combinaisons absurdes
     "âge de signal sous la marge Capital": _set(["engine"], "signal_max_age_minutes", 2),
     "cycle plus long que le chien de garde": lambda r: r.update(cycle_seconds=600),

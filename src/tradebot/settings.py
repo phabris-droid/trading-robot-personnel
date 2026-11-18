@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Annotated, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -219,7 +219,8 @@ class NewsWatchCfg(Strict):
     calendar_url: str = Field(pattern=HTTPS_URL)            # A9 : flux JSON public
     refresh_minutes: int = Field(ge=1, le=1440)
     announcement_impacts: list[Literal["High", "Medium", "Low"]] = Field(min_length=1)
-    high_impact_keywords: list[str] = Field(min_length=1, max_length=200)
+    high_impact_keywords: list[Annotated[str, Field(min_length=3)]] = Field(min_length=1,
+                                                                       max_length=200)
     # A9 : devises dont les annonces bloquent les cryptos (et l'or), ex. [USD] ou [USD, EUR]
     crypto_announcement_currencies: list[str] = Field(min_length=1, max_length=10)
 
@@ -281,7 +282,7 @@ class GeoCfg(Strict):
     enabled: bool
     official_feeds: list[str] = Field(max_length=20)       # comptent double
     media_feeds: list[str] = Field(max_length=30)
-    keywords: list[str] = Field(min_length=1, max_length=200)
+    keywords: list[Annotated[str, Field(min_length=3)]] = Field(min_length=1, max_length=200)
     confirm_sources: int = Field(ge=1, le=10)
     confirm_window_minutes: int = Field(ge=5, le=1440)
     block_hours: float = Field(ge=0, le=48)
@@ -293,6 +294,18 @@ class GeoCfg(Strict):
             if not re.match(HTTPS_URL, url):
                 raise ValueError(f"flux non HTTPS ou invalide : {url}")
         return v
+
+    @model_validator(mode="after")
+    def _no_duplicate_feed(self) -> GeoCfg:
+        """Un même flux compté deux fois (ou officiel ET média) fausserait la règle des
+        sources : refusé au démarrage (audit du 18 nov.)."""
+        seen: set[str] = set()
+        for url in list(self.official_feeds) + list(self.media_feeds):
+            key = url.rstrip("/").lower()
+            if key in seen:
+                raise ValueError(f"flux en double : {url}")
+            seen.add(key)
+        return self
 
 
 class Analysts(Strict):
