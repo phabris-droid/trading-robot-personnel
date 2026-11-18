@@ -588,3 +588,25 @@ def test_currency_conversion_works_on_a_closed_market_and_keeps_the_last_rate(mo
     route.respond(503)
     mock.get(host=HOST, path="/api/v1/markets/USDEUR").respond(404, json={"errorCode": "x"})
     assert cap.usd_rate("EUR") == pytest.approx((1.0800 + 1.0801) / 2)   # dernier cours
+
+
+def test_history_requests_never_exceed_the_api_date_range(mock, cap):
+    """Mesuré sur l'API démo le 18 nov. : une période de 1000 h est refusée
+    (error.invalid.max.daterange) ; chaque requête d'historique reste sous 1000 h."""
+    from datetime import UTC, datetime
+
+    fmt = "%Y-%m-%dT%H:%M:%S"
+    spans = []
+
+    def handler(request):
+        q = request.url.params
+        start = datetime.strptime(q["from"], fmt).replace(tzinfo=UTC).timestamp()
+        end = datetime.strptime(q["to"], fmt).replace(tzinfo=UTC).timestamp()
+        spans.append((end - start) / 3600)
+        if end - start >= 1000 * 3600:
+            return httpx.Response(400, json={"errorCode": "error.invalid.max.daterange"})
+        return httpx.Response(200, json={"prices": []})
+    mock.get(host=HOST, path="/api/v1/prices/EURUSD").mock(side_effect=handler)
+    cap.history("EURUSD", NOW - 365 * 86_400, NOW - 86_400)
+    assert spans and max(spans) < 1000
+    assert sum(spans) >= 364 * 24 - 1                      # toute la période est couverte

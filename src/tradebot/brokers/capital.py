@@ -77,6 +77,7 @@ ACCEPTED = "ACCEPTED"
 TRADEABLE = "TRADEABLE"
 RESOLUTION_1H = "HOUR"
 MAX_CANDLES = 1000
+MAX_HISTORY_RANGE_H = 990          # période maximale d'une requête d'historique (< 1000 h)
 HOUR_S = 3600
 ABSENCES_TO_CLOSE = 2          # CDC §6 : fermée seulement après 2 absences consécutives
 ABSENCE_MIN_GAP_S = 5         # T11 : 2 absences séparées d'au moins 5 s (2 cycles)
@@ -306,7 +307,9 @@ class CapitalCFD(Broker):
     def history(self, symbol: str, start_ts: float, end_ts: float) -> pd.DataFrame:
         """Bougies 1 h clôturées entre deux dates, par paquets de 1000 (validation, étape 9)."""
         prices: list[dict] = []
-        step = MAX_CANDLES * HOUR_S
+        # mesuré sur l'API démo (18 nov.) : 1000 h refusées (error.invalid.max.daterange),
+        # 999 h acceptées ; les bornes se chevauchent, les doubles sont retirés par _to_frame
+        step = MAX_HISTORY_RANGE_H * HOUR_S
         t = int(start_ts)
         while t < end_ts:
             to = min(int(end_ts), t + step)
