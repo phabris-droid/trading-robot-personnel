@@ -350,9 +350,15 @@ class Engine:
         le stop logiciel reste actif (prix acheteur / vendeur contre le stop du journal)."""
         try:
             bid, ask = broker.quote(row["market"])
-            crossed = bid <= row["stop"] if row["side"] == "buy" else ask >= row["stop"]
-            if not crossed:
-                return
+        except Exception as exc:  # noqa: BLE001 - prix indisponible : rien n'est franchi de sûr
+            self.alert("error", f"{row['market']} : stop logiciel non vérifié, prix "
+                                f"indisponible ({type(exc).__name__}) — nouvel essai au cycle "
+                                "suivant", key=f"swstop-prix:{row['id']}")
+            return
+        crossed = bid <= row["stop"] if row["side"] == "buy" else ask >= row["stop"]
+        if not crossed:
+            return
+        try:
             broker.close_position(row["id"])
             self._record_close(row, broker, "stop logiciel (stop chez la plateforme incertain)")
         except Exception as exc:  # noqa: BLE001

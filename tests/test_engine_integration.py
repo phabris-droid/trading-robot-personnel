@@ -809,6 +809,21 @@ def test_audit6_inconsistent_position_keeps_its_software_stop(tmp_path):
     assert journal.open_positions() == []
 
 
+def test_software_stop_without_price_is_not_reported_as_a_failed_close(tmp_path):
+    """Audit du 18 nov. : prix indisponible = stop logiciel non vérifié (erreur), jamais
+    l'alerte critique « fermeture impossible » ; la position reste suivie."""
+    broker, eng, journal, alerts = _with_positions(tmp_path, n=1)
+    row = journal.open_positions()[0]
+
+    def no_price(symbol):
+        raise TimeoutError("prix")
+    broker.quote = no_price
+    eng._software_stop(row, broker)
+    assert len(journal.open_positions()) == 1
+    assert any("prix indisponible" in m for _, m in alerts)
+    assert not any("fermeture impossible" in m for _, m in alerts)
+
+
 def test_audit8_no_entry_when_equity_is_not_confirmed_recently(tmp_path):
     """Audit trading n° 8 : lecture du capital en panne : disjoncteurs non mesurés -> aucune
     nouvelle entrée sur cette plateforme."""
