@@ -600,3 +600,13 @@ def test_external_titles_cannot_carry_clickable_links_or_bot_commands():
     assert "https://" not in t and "[:]//" in t
     assert " /reprendre" not in t and "∕reprendre" in t and "∕urgence" in t
     assert NO_PREVIEW.is_disabled is True
+
+
+def test_feeds_are_fetched_with_a_generic_user_agent():
+    """Mesuré le 18 nov. : CNBC répond 403 au nom par défaut de httpx ; le robot se présente
+    avec un nom générique, sans information sur le propriétaire."""
+    with respx.mock() as m:
+        route = m.get("https://flux.example/rss").respond(content=b"<rss/>")
+        fetch_limited(httpx.Client(), "https://flux.example/rss", 1024, 20)
+    ua = route.calls.last.request.headers["user-agent"]
+    assert ua.startswith("Mozilla/5.0 (compatible; tradebot-veille") and "@" not in ua

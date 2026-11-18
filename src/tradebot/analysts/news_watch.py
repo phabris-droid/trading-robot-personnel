@@ -69,6 +69,11 @@ def feed_category(url: str) -> str:
     return "crypto" if ("coin" in url.lower() or "crypto" in url.lower()) else "macro"
 
 
+# certains sites (CNBC) refusent le nom par défaut de httpx (403, mesuré le 18 nov.) ;
+# nom générique, sans aucune information sur le propriétaire
+USER_AGENT = "Mozilla/5.0 (compatible; tradebot-veille/1.0)"
+
+
 def fetch_limited(client: httpx.Client, url: str, max_bytes: int, timeout_s: float) -> bytes:
     """Téléchargement plafonné en taille ET en durée totale (un flux piégé ne fige rien)."""
     deadline = time.monotonic() + timeout_s
@@ -79,7 +84,8 @@ def fetch_limited(client: httpx.Client, url: str, max_bytes: int, timeout_s: flo
         chunks, size = [], 0
         left = max(deadline - time.monotonic(), 0.1)
         with client.stream("GET", url, timeout=left, follow_redirects=False,
-                           headers={"Accept-Encoding": "identity"}) as resp:
+                           headers={"Accept-Encoding": "identity",
+                                    "User-Agent": USER_AGENT}) as resp:
             if resp.is_redirect:
                 url = str(resp.url.join(resp.headers.get("location", "")))
                 continue
