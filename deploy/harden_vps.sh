@@ -249,11 +249,21 @@ cat > "$BACKUP_BIN" <<EOF
 # tradebot-data en mode normal, ou /opt/tradebot/data en mode de repli systemd (K4).
 set -euo pipefail
 stamp=\$(date -u +%Y-%m-%d)
+# Copie COHÉRENTE des journaux SQLite (API de sauvegarde, sûre pendant les écritures) dans
+# data/backups/ ; les fichiers vivants .db / -wal / -shm sont exclus de l'archive quand la copie
+# a réussi (robot arrêté : les fichiers au repos sont cohérents et archivés tels quels).
+EXCL=""
 if docker volume inspect tradebot-data >/dev/null 2>&1; then
+  if docker exec tradebot python -m tradebot.snapshot >/dev/null 2>&1; then
+    EXCL="--exclude=./*.db --exclude=./*.db-wal --exclude=./*.db-shm"
+  fi
   archive() { docker run --rm --network none -v tradebot-data:/data:ro alpine:3.20@sha256:c64c687cbea9300178b30c95835354e34c4e4febc4badfe27102879de0483b5e \\
-                tar czf - -C /data .; }
+                tar czf - \$EXCL -C /data .; }
 elif [ -d /opt/tradebot/data ]; then
-  archive() { tar czf - -C /opt/tradebot/data .; }
+  if (cd /opt/tradebot && sudo -u trader .venv/bin/python -m tradebot.snapshot) >/dev/null 2>&1; then
+    EXCL="--exclude=./*.db --exclude=./*.db-wal --exclude=./*.db-shm"
+  fi
+  archive() { tar czf - \$EXCL -C /opt/tradebot/data .; }
 else
   echo "aucune donnée du robot à sauvegarder" >&2
   exit 1

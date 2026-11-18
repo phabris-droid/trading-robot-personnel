@@ -354,3 +354,21 @@ def test_n9_rejected_writes_list_is_bounded(db):
             j._write(_Op("INSERT INTO trades (position_id) VALUES (?)", (f"x{i}",),
                          critical=True))
     assert len(j.rejected) == MAX_REJECTED
+
+
+def test_consistent_snapshot_for_backups_while_the_robot_writes(db, tmp_path):
+    """Audit sécurité du 18 nov. : copie cohérente (API de sauvegarde SQLite), lisible,
+    avec une extension que la sauvegarde n'exclut jamais."""
+    import sqlite3
+
+    from tradebot.snapshot import snapshot
+
+    j = Journal(db, "demo")
+    _open_pos(j)
+    j.set_state("x", "1")                        # écritures en cours (journal ouvert, WAL)
+    [copy] = snapshot(db.parent, tmp_path / "backups")
+    assert copy.suffix == ".sqlite"
+    with sqlite3.connect(copy) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 1
+    j.close()

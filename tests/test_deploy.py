@@ -165,3 +165,10 @@ def test_every_dependency_is_pinned_with_sha256_hashes_and_installed_with_requir
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "--require-hashes" in dockerfile and "--no-build-isolation" in dockerfile
     assert "--require-hashes" in _read("install_systemd.sh")
+
+
+def test_backup_archives_a_consistent_sqlite_copy():
+    """Audit sécurité n° 6 du 18 nov. : jamais une copie de base en cours d'écriture."""
+    harden = _read("harden_vps.sh")
+    assert "python -m tradebot.snapshot" in harden
+    assert "--exclude=./*.db --exclude=./*.db-wal --exclude=./*.db-shm" in harden
