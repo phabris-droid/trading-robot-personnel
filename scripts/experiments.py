@@ -43,6 +43,13 @@ def with_fee(settings, platform: str, fee_pct: float):
         update={platform: costs})})
 
 
+def without_trailing(settings):
+    """Même configuration, stop suiveur désactivé (mesure de son effet)."""
+    trail = settings.risk.trailing_stop.model_copy(update={"enabled": False})
+    return settings.model_copy(update={"risk": settings.risk.model_copy(
+        update={"trailing_stop": trail})})
+
+
 def halves(trades, split_ts: float) -> list[dict]:
     out = []
     for part in ([t for t in trades if t.entry_ts < split_ts],
@@ -55,7 +62,8 @@ def halves(trades, split_ts: float) -> list[dict]:
 def run(df: pd.DataFrame, market, settings) -> dict[str, list[dict]]:
     split = float(df["ts"].iloc[len(df) // 2])
     fee = settings.costs.of(market.platform).fee_pct
-    configs = {f"1h {fee:g}%": (df, settings),
+    configs = {f"1h {fee:g}% sans stop suiveur": (df, without_trailing(settings)),
+               f"1h {fee:g}%": (df, settings),
                f"1h {BNB_FEE_PCT:g}%": (df, with_fee(settings, market.platform, BNB_FEE_PCT)),
                f"4h {fee:g}%": (to_4h(df), settings),
                f"4h {BNB_FEE_PCT:g}%": (to_4h(df), with_fee(settings, market.platform,

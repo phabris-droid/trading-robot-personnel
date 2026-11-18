@@ -339,7 +339,7 @@ def test_experiments_compare_fees_and_timeframes_without_tuning(data):
     block = data[(data["ts"] >= b) & (data["ts"] < b + 14_400)]
     assert four["high"].iloc[0] == block["high"].max() and len(block) == 4
     res = exp.run(data, MARKETS["BTCUSDT"], S)
-    assert len(res) == 4 and all(len(v) == 2 for v in res.values())
+    assert len(res) == 5 and all(len(v) == 2 for v in res.values())
     cheap = exp.with_fee(S, "binance", 0.075)
     assert cheap.costs.binance.fee_pct == 0.075 and S.costs.binance.fee_pct == 0.1
 

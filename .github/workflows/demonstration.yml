@@ -1,5 +1,6 @@
 # Démonstration du robot (aucun vrai compte, aucun ordre réel) :
 #   1. validation historique : les 12 derniers mois de VRAIS prix Binance rejoués avec les
+#      (stop suiveur compris depuis le 18 novembre 2026 ; effet mesuré par l'expérience)
 #      fonctions exactes du robot (stratégies, taille, frais, spread) ;
 #   2. robot en marche : le conteneur tourne quelques minutes en mode DÉMO sans clés, on lit
 #      son tableau de bord, ses journaux, puis on l'arrête proprement.
