@@ -154,6 +154,30 @@ Corrigés le 18 novembre 2026 : historique OCO complet (n7), actions Docker exer
 (n8), écritures refusées bornées (n9), capital non jugé pendant un ordre incertain (M4-b),
 conversion de devise Capital.com (P2), stop suiveur après 1 R (P2).
 
+### Audit du 18 novembre 2026 (stop suiveur, veille géopolitique, sécurité) : du plus critique au moins critique
+
+| Gravité | Erreur | Commit |
+|---|---|---|
+| 🔴 | Stop suiveur Binance : nouvel OCO refusé → position sans stop (désormais : ancien stop remis, sinon fermeture aussitôt) | `e08d2e9` |
+| 🔴 | Veille géopolitique : une même organisation (2 flux) ou l'IA seule pouvaient « confirmer » un événement ; ancienne confirmation retenue | `e08d2e9` |
+| 🟠 | Stop suiveur appliqué au retour à la moyenne (mesuré : dégrade SOL) ; moteur et backtest calculés différemment | `238ab97` |
+| 🟠 | Identifiant de l'OCO reposé non journalisé (marché en pause au redémarrage) ; déploiement acceptant n'importe quelle image | `68f7208`, `21a6328` |
+| 🟠 | Disjoncteurs suspendus sans limite par un ordre incertain (désormais 30 min au plus) | `e08d2e9` |
+| 🟠 | Conversion de devise impossible marché fermé ; validation d'un marché effacée par une panne de données | `cce3270` |
+| 🟡 | Sauvegarde pouvant copier une base SQLite en cours d'écriture | `cec19f8` |
+| 🟡 | Titres externes cliquables dans Telegram (liens, commandes) | `8fca7a5` |
+| 🟡 | Mots-clés trop courts / flux en double acceptés dans la configuration | `7c4247b` |
+| ⚪ | Limite d'essais du tableau de bord contournable en IPv6 ; mémoire vidée d'un coup | `8811665` |
+| ⚪ | Vérification des connexions refusant un compte hors USD que le robot accepte | `baf733e` |
+| ⚪ | Stop logiciel : prix indisponible signalé à tort comme « fermeture impossible » | `6109883` |
+| ⚪ | Audit VPS sans contrôle de la règle sudo du compte `deploy` | `b5e431d` |
+
+Restent documentés, sans correction de code : outils de la CI installés sans empreintes
+(versions figées), Dependabot ne met pas à jour les fichiers `.lock` (mise à jour manuelle avec
+`uv pip compile --generate-hashes`), et une source d'actualités dont le nom DNS pointerait vers
+une adresse interne n'est filtrée que par son nom (le conteneur n'a accès à aucun service
+interne).
+
 ### Contre-audit (2ᵉ passage) : erreur → commit → test
 
 | Gravité | # | Erreur | Commit | Test |

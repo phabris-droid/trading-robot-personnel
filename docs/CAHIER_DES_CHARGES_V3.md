@@ -97,7 +97,11 @@ bougies chargées (300) est refusé au démarrage.
 **[V3] Stop suiveur (P2 livré)** : dès que le gain atteint 1 R (R = distance initiale
 entrée-stop), le stop remonte au prix d'entrée, puis suit le meilleur prix à 1 R ; il ne
 recule jamais. Appliqué chez la plateforme (OCO reposé sur Binance, stop modifié sur
-Capital.com), dans le moteur et dans le backtest. Réglable dans `risk.trailing_stop`.
+Capital.com), dans le moteur et dans le backtest. Meilleur prix = clôture de la dernière
+bougie fermée (moteur et backtest identiques) ; déplacement seulement au-delà de 0,1 R.
+**Réservé à `trend_ema` et `breakout`** : mesuré sur 12 mois, il améliore ETH mais dégrade le
+retour à la moyenne (SOL) ; liste réglable dans `risk.trailing_stop.strategies`. Stop
+impossible à reposer : ancien stop remis, sinon position fermée aussitôt.
 
 **Validation avant le réel** : `scripts/validate_markets.py` rejoue chaque couple
 marché-stratégie sur 12 mois, **[V3] dans les conditions réelles du compte** (100 $,
@@ -172,6 +176,13 @@ Pentagone, Kremlin via TASS (le site du Kremlin refuse HTTPS), NBC/CNBC, CBS, AB
 Al Jazeera, France 24 (CNN n'a pas de flux HTTPS). Titres en anglais et en français. Sources
 muettes trop longtemps : erreur, bloquante en réel. Chaque événement confirmé est signalé
 sur Telegram.
+
+**[V3] Règles d'un événement géopolitique** : mot-clé (mot entier jusqu'à 4 lettres, début de
+mot sinon) repris par au moins 3 **organisations** distinctes (un site = une organisation,
+quel que soit le nombre de ses flux) en 60 min, une organisation officielle comptant double ;
+TASS compte comme un média. La confirmation la plus récente fait foi ; entrées bloquées 4 h.
+L'IA ne peut jamais, seule, regrouper des titres en un événement. Titres repris sur Telegram
+sans aperçu de lien, liens et commandes neutralisés.
 
 **Règles pour l'IA** : 50 appels par jour pour les décisions et 24 pour la veille, budgets
 séparés **[V3] conservés au redémarrage** ; titres transmis comme données, jamais comme
@@ -278,12 +289,14 @@ revalidation, veille de référence.
 - Pare-feu ufw, fail2ban, mises à jour automatiques (redémarrage à 4 h UTC), horloge
   synchronisée.
 - **[V3] Déploiement par commande forcée** (décision S5) : utilisateur `deploy` sans shell ni
-  Docker, dont la clé ne peut lancer qu'un script acceptant une image par empreinte sha256.
+  Docker, dont la clé ne peut lancer qu'un script acceptant une image par empreinte sha256 de ce dépôt seulement.
 - **[V3] Sauvegardes** (décision S6) : quotidiennes, chiffrées avec la clé GPG **publique** du
   propriétaire (le serveur ne peut pas les relire), copiées hors du serveur (rclone),
-  conservées 14 jours.
+  conservées 14 jours. **[V3]** Les journaux SQLite sont copiés de façon cohérente
+  (`python -m tradebot.snapshot`) avant archivage, jamais en cours d'écriture.
 - Audit mensuel en lecture seule (`deploy/audit_vps.sh`, PASS / WARN / FAIL), **[V3]** qui
-  contrôle aussi les sauvegardes externes et la restriction SSH.
+  contrôle aussi les sauvegardes externes et la restriction SSH, **[V3]** la règle sudo et la commande forcée
+  du compte `deploy`, et signale une ancienne phrase de chiffrement restée sur le serveur.
 
 **Conteneur** : non-root (uid 10001), lecture seule sauf `data/`, aucun privilège, mémoire
 limitée, redémarrage automatique, contrôle de santé sur `/health` (moteur vivant), port publié
@@ -296,7 +309,8 @@ sur 127.0.0.1 seulement ; repli sans Docker : `deploy/install_systemd.sh`.
   **[V3]** même règle des 12 caractères en démo pour ouvrir le tableau de bord.
 - **[V3] Tableau de bord (décision S1)** : essais ratés limités **par adresse IP** (1 s, puis
   2 s… jusqu'à 5 min), et pendant l'attente rien n'est évalué, pas même le bon mot de passe ;
-  le propriétaire n'est jamais bloqué depuis une autre adresse. Requêtes d'une autre origine
+  le propriétaire n'est jamais bloqué depuis une autre adresse. En IPv6, la limite porte sur le bloc /64
+  (changer d'adresse ne sert à rien) ; mémoire bornée sans jamais effacer tous les blocages. Requêtes d'une autre origine
   et formulaires d'autres sites refusés ; en-têtes anti-clickjacking et CSP ; Caddy en HTTPS
   avec HSTS, `/health` non exposé sur Internet.
 - **[V3] Flux d'actualités** : 2 Mo et 20 s au plus, HTTPS seulement, redirections vers des
