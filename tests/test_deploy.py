@@ -183,5 +183,5 @@ def test_audit_checks_the_deploy_account_and_old_backup_passphrase():
     assert "/root/.tradebot-backup-pass" in audit
     harden = _read("harden_vps.sh")
     # la règle vérifiée par l'audit est exactement celle posée par harden_vps.sh
-    assert "'%s ALL=(%s) NOPASSWD: /usr/local/sbin/tradebot-deploy-run\n'" in harden
+    assert "'%s ALL=(%s) NOPASSWD: /usr/local/sbin/tradebot-deploy-run\\n'" in harden
     assert 'DEPLOY_USER="deploy"' in harden and 'APP_USER="trader"' in harden
