@@ -562,5 +562,7 @@ def test_p2_equity_of_a_eur_account_is_converted_to_usd(mock, cap):
                                                            "profitLoss": 0.0}}]})
     assert cap.equity() == pytest.approx(100.0 * (1.0800 + 1.0801) / 2)
     assert cap.account_currency == "EUR"
-    with pytest.raises(ApiError, match="introuvable"):
+    mock.get(host=HOST, path="/api/v1/markets/XYZUSD").respond(404, json={"errorCode": "x"})
+    mock.get(host=HOST, path="/api/v1/markets/USDXYZ").respond(404, json={"errorCode": "x"})
+    with pytest.raises(BrokerError):
         cap.usd_rate("XYZ")
