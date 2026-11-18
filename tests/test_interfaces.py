@@ -369,3 +369,50 @@ def test_connection_check_is_read_only_and_never_prints_secrets():
         results = mod.run(S, env, httpx.Client())
     status, _, detail = next(r for r in results if r[1] == "Telegram")
     assert status == mod.KO and "HTTP 401" in detail and "jeton-de-test" not in detail
+
+
+def test_connection_check_accepts_a_convertible_account_currency(monkeypatch):
+    """Audit sécurité n° 12 du 18 nov. : comme le moteur (P2), un compte Capital.com en EUR
+    est accepté avec son cours ; sans cours, KO avec un message lisible (sans secret)."""
+    import importlib.util
+    from pathlib import Path
+
+    from tradebot.brokers import capital
+
+    spec = importlib.util.spec_from_file_location(
+        "check_connections", Path(__file__).parents[1] / "scripts" / "check_connections.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class FakeCap:
+        account_currency = "EUR"
+        rate = 1.08
+
+        def login(self):
+            return None
+
+        def equity(self):
+            return 1000.0
+
+        def usd_rate(self, cur):
+            return self.rate
+
+        def min_qty(self, s):
+            return 0.01
+
+        def quote(self, s):
+            return 1.0, 1.1
+
+        def candles(self, s, n):
+            return [0] * n
+
+    fake = FakeCap()
+    monkeypatch.setattr(capital.CapitalCFD, "from_settings", lambda *a, **k: fake)
+    env = {"CAPITAL_API_KEY": "k", "CAPITAL_IDENTIFIER": "i", "CAPITAL_PASSWORD": "p"}
+    by = {n: (s, d) for s, n, d in mod.run(S, env, httpx.Client())}
+    status, detail = by["Capital.com : solde et devise"]
+    assert status == mod.OK and "1080.00 USD" in detail
+    fake.rate = float("nan")
+    by = {n: (s, d) for s, n, d in mod.run(S, env, httpx.Client())}
+    status, detail = by["Capital.com : solde et devise"]
+    assert status == mod.KO and "sans cours de conversion" in detail

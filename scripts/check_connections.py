@@ -2,7 +2,8 @@
 
 Avec les clés du fichier .env, vérifie en une minute, API par API :
 - Binance : heure du serveur, solde du compte, règles de chaque marché, prix actuel ;
-- Capital.com : ouverture de session, solde, devise du compte (USD attendu), chaque marché ;
+- Capital.com : ouverture de session, solde, devise du compte (USD, ou autre devise
+  convertie en USD au cours du moment), chaque marché ;
 - Telegram : le bot existe, et un message de test arrive au propriétaire ;
 - Claude (Anthropic) : une réponse très courte (coût négligeable).
 Aucune clé, aucun mot de passe ni jeton n'est jamais affiché.
@@ -14,6 +15,7 @@ Code de sortie 0 si tout ce qui est configuré fonctionne, 1 sinon.
 """
 from __future__ import annotations
 
+import math
 import sys
 from collections.abc import Callable
 
@@ -31,10 +33,16 @@ def _safe_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}" + (f" (HTTP {status})" if status else "")
 
 
+class CheckFailed(Exception):
+    """Échec dont le message est écrit par ce script (affichable tel quel)."""
+
+
 def check(name: str, fn: Callable[[], str], results: list) -> None:
     try:
         detail = fn()
         results.append((OK, name, detail))
+    except CheckFailed as exc:              # message rédigé par ce script : sans secret
+        results.append((KO, name, str(exc)))
     except Exception as exc:  # noqa: BLE001
         results.append((KO, name, _safe_error(exc)))
 
@@ -73,9 +81,14 @@ def run(settings, env: dict, http: httpx.Client | None = None) -> list[tuple[str
         def equity() -> str:
             value = cap.equity()
             cur = cap.account_currency or "inconnue"
-            if cur != "USD":
-                raise ValueError(f"devise du compte {cur} (USD attendu, décision A10)")
-            return f"capital {value:.2f} {cur}"
+            if cur == "USD":
+                return f"capital {value:.2f} USD"
+            # P2 du CDC : le robot convertit au cours du moment (comme le moteur)
+            rate = float(cap.usd_rate(cur))
+            if not (math.isfinite(rate) and rate > 0):
+                raise CheckFailed(f"devise du compte {cur} sans cours de conversion en USD")
+            return (f"capital {value:.2f} {cur} (1 {cur} = {rate:.4f} USD, "
+                    f"soit {value * rate:.2f} USD)")
         check("Capital.com : solde et devise", equity, results)
         for m in settings.markets:
             if m.platform == "capital" and m.enabled:
