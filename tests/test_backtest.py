@@ -316,7 +316,7 @@ def test_behaviour_simulation_runs_the_full_engine_on_candles(tmp_path):
     assert "## Résultat global" in text and "## Ce qui a bloqué les entrées" in text
     assert len(res["curve"]) == 400
     for p in res["broker"].pos.values():
-        assert p["stop"] < p["entry"] < p["target"]
+        assert p["stop"] < p["target"] and p["entry"] < p["target"]   # stop suiveur : peut dépasser l'entrée
     res["journal"].close()
 
 
