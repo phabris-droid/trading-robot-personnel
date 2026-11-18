@@ -589,3 +589,14 @@ def test_geo_french_headlines_are_understood():
              for i in range(3)]
     v = GeoWatch(G, _geo_cache(items)).review(_ctx())
     assert v.blocked and "droits de douane" in v.reason
+
+
+def test_external_titles_cannot_carry_clickable_links_or_bot_commands():
+    """Audit sécurité du 18 nov. : titre piégé repris dans Telegram -> rien de cliquable."""
+    from tradebot.analysts.geopolitics import safe_title
+    from tradebot.interfaces.telegram_bot import NO_PREVIEW
+
+    t = safe_title("Breaking: see https://evil.example/x then /reprendre or /urgence")
+    assert "https://" not in t and "[:]//" in t
+    assert " /reprendre" not in t and "∕reprendre" in t and "∕urgence" in t
+    assert NO_PREVIEW.is_disabled is True

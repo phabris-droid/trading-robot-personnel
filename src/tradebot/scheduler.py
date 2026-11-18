@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 import httpx
 
-from tradebot.analysts.geopolitics import GeoWatch
+from tradebot.analysts.geopolitics import GeoWatch, safe_title
 from tradebot.interfaces import reports
 from tradebot.logs import log
 from tradebot.validation import (
@@ -161,7 +161,7 @@ class Jobs:
             if 0 <= now - ev.ts <= geo_cfg.block_hours * 3600 and geo_key not in self._announced:
                 self._announced.add(geo_key)
                 self.notify(f"🌍 Événement géopolitique « {ev.keyword} » ({len(ev.sources)} "
-                            f"sources) : {ev.title[:150]} — nouvelles entrées bloquées "
+                            f"sources) : {safe_title(ev.title[:150])} — nouvelles entrées bloquées "
                             f"{geo_cfg.block_hours:g} h")
 
     def healthcheck(self) -> None:

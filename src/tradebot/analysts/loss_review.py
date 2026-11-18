@@ -16,6 +16,8 @@ from urllib.parse import urlsplit
 
 import pandas as pd
 
+from tradebot.analysts.geopolitics import safe_title
+
 STATE_PREFIX = "loss_review:"
 SOURCES_BEFORE_S = 2 * 3600            # actualités publiées jusqu'à 2 h avant l'entrée
 FALSE_START_R = 0.3                    # moins de 0,3 R de gain atteint : départ manqué
@@ -78,11 +80,11 @@ def news_around(news_cache, opened_ts: float, closed_ts: float) -> list[str]:
     for it in sorted(items, key=lambda x: x.published_ts):
         if opened_ts - SOURCES_BEFORE_S <= it.published_ts <= closed_ts:
             mark = " [fort impact]" if getattr(it, "impact", "") == "high" else ""
-            out.append(f"{_host(it.source)} : {it.title[:110]}{mark}")
+            out.append(f"{_host(it.source)} : {safe_title(it.title[:110])}{mark}")
     for ev in getattr(news_cache, "events", []):
         if opened_ts - SOURCES_BEFORE_S <= ev.ts <= closed_ts and ev.impact in ("High",
                                                                                  "Medium"):
-            out.append(f"calendrier économique : {ev.currency} — {ev.title} ({ev.impact})")
+            out.append(f"calendrier économique : {ev.currency} — {safe_title(ev.title)} ({ev.impact})")
     return out[:8]
 
 

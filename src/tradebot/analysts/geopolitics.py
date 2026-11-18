@@ -51,6 +51,13 @@ def matched_keyword(title: str, keywords: list[str]) -> str | None:
     return found[0] if found else None
 
 
+def safe_title(text: str) -> str:
+    """Titre externe repris dans Telegram (audit du 18 nov.) : liens et commandes du bot
+    neutralisés, pour qu'un flux piégé ne puisse rien rendre cliquable."""
+    text = re.sub(r"(?i)\b(https?|ftp)://", r"\1[:]//", str(text))
+    return re.sub(r"(^|\s)/(?=\w)", "\\1∕", text)         # « /reprendre » -> « ∕reprendre »
+
+
 def organisation(url: str) -> str:
     """Une organisation = un nom de site : les deux flux de la Maison-Blanche comptent pour
     une seule source."""

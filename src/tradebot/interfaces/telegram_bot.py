@@ -17,11 +17,15 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from telegram import LinkPreviewOptions
+
 from tradebot.interfaces import reports
 from tradebot.logs import log
 
 TELEGRAM_LIMIT = 4096
 CONFIRM_WINDOW_S = 60
+# audit du 18 nov. : aucun aperçu de lien (un titre externe piégé ne s'affiche jamais en carte)
+NO_PREVIEW = LinkPreviewOptions(is_disabled=True)
 
 HELP = ("/statut /positions /trades /pnl /vie /rapport /news /agenda /audit /pret "
         "/pause /reprendre /urgence (puis /confirmer sous 60 s)")
@@ -170,7 +174,8 @@ class TelegramService:
                                           update.effective_message.text or "",
                                           update.effective_user.id)
         for reply in replies:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text=reply)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text=reply,
+                                           link_preview_options=NO_PREVIEW)
 
     def send(self, text: str) -> None:
         """Notification au propriétaire (découpée si trop longue). Ne lève jamais."""
@@ -179,7 +184,8 @@ class TelegramService:
         for part in split_message(text):
             try:
                 asyncio.run_coroutine_threadsafe(
-                    self._bot.send_message(chat_id=self.owner, text=part), self._loop)
+                    self._bot.send_message(chat_id=self.owner, text=part,
+                                           link_preview_options=NO_PREVIEW), self._loop)
             except Exception as exc:  # noqa: BLE001
                 log("error", f"envoi Telegram impossible : {type(exc).__name__}")
 
