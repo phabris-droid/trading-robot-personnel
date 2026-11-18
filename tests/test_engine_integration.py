@@ -1014,3 +1014,18 @@ def test_winning_trade_is_not_analysed(tmp_path):
     broker.exit_price = lambda pid: row["entry"] * 1.05
     eng._record_close(row, broker, "objectif")
     assert not any(m.startswith("🔍") for _, m in alerts)
+
+
+def test_m4b_equity_is_not_judged_while_an_order_is_uncertain(tmp_path):
+    """M4-b : achat incertain = capital faussé : aucun disjoncteur évalué, entrées refusées."""
+    broker = FakeBroker(DATA)
+    eng, journal, alerts = _engine(tmp_path, broker)
+    eng.cycle()
+    seen = eng._equity_ts.get("binance")
+    journal.save_order(client_id="BTCUSDT-9", platform="binance", market="BTCUSDT", side="buy",
+                       qty=0.001, status="uncertain", stop=1.0, target=1e6, strategy="x")
+    broker.equity = lambda: 1.0                       # chute fictive pendant l'incertitude
+    eng._read_equity()
+    assert eng._equity_ts.get("binance") == seen      # rien de retenu
+    assert not eng.breakers.safety_stopped("binance")
+    assert any("capital non évalué" in m for _, m in alerts)

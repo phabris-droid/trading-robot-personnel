@@ -234,6 +234,16 @@ class Engine:
     def _read_equity(self) -> None:
         for name, broker in self.brokers.items():
             try:
+                uncertain = [o for o in (self._j("orders", "uncertain") or [])
+                             if o["platform"] == name]
+                if uncertain:
+                    # M4-b : un ordre incertain (achat peut-être exécuté) fausse le capital lu :
+                    # il n'est ni retenu ni évalué par les disjoncteurs tant qu'il n'est pas
+                    # résolu (entrées refusées entre-temps : capital non confirmé, M9)
+                    self.alert("warning", f"{name} : capital non évalué tant que "
+                                          f"{len(uncertain)} ordre(s) incertain(s) ne sont pas "
+                                          "résolus", key=f"equity_uncertain:{name}")
+                    continue
                 value = broker.equity()
                 events = self.breakers.update_equity(name, value)
                 self._breaker_events(name, events)
