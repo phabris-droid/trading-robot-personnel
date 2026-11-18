@@ -54,3 +54,12 @@ def configure_stdlib() -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(logging.WARNING)
+
+
+def utf8_console() -> None:
+    """Scripts lancés sous Windows (console cp1252) : accents, flèches et émojis s'affichent
+    au lieu de faire planter le script (UnicodeEncodeError mesuré le 18 nov.)."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")

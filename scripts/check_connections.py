@@ -129,6 +129,9 @@ def run(settings, env: dict, http: httpx.Client | None = None) -> list[tuple[str
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tradebot.logs import utf8_console
+
+    utf8_console()
     env = load_env()
     try:
         settings = load_settings(env=env)

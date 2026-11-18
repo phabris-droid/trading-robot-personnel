@@ -257,6 +257,9 @@ def report(res: dict, capital: float, months: int) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tradebot.logs import utf8_console
+
+    utf8_console()
     parser = argparse.ArgumentParser(description="Étude du comportement du robot (simulation)")
     parser.add_argument("--months", type=int, default=6)
     parser.add_argument("--capital", type=float, default=100.0)

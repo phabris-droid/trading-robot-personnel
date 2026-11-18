@@ -20,6 +20,9 @@ HISTORY = Path("data/history")
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tradebot.logs import utf8_console
+
+    utf8_console()
     parser = argparse.ArgumentParser(description="Veille de référence")
     parser.add_argument("--out", default="data/audits")
     args = parser.parse_args(argv)

@@ -77,6 +77,9 @@ def lines_for(d: dict) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tradebot.logs import utf8_console
+
+    utf8_console()
     parser = argparse.ArgumentParser(description="Diagnostic des marchés à revoir")
     parser.add_argument("--out", default="data/audits/diagnostic.md")
     args = parser.parse_args(argv)

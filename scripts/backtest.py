@@ -17,6 +17,9 @@ from tradebot.settings import ConfigError, load_settings
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tradebot.logs import utf8_console
+
+    utf8_console()
     parser = argparse.ArgumentParser(description="Backtest d'un marché de config.yaml")
     parser.add_argument("symbol")
     parser.add_argument("--csv", default=None)

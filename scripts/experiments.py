@@ -78,6 +78,9 @@ def fmt(h: dict) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tradebot.logs import utf8_console
+
+    utf8_console()
     parser = argparse.ArgumentParser(description="Effet des frais et de l'unité de temps")
     parser.add_argument("--out", default="data/audits/experiences.md")
     args = parser.parse_args(argv)

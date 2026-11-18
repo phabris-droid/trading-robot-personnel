@@ -100,6 +100,9 @@ def report_text(rows: list[dict], settings) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tradebot.logs import utf8_console
+
+    utf8_console()
     parser = argparse.ArgumentParser(description="Validation historique des marchés (CDC §3)")
     parser.add_argument("--offline", action="store_true", help="cache data/history/ uniquement")
     parser.add_argument("--months", type=int, default=None)

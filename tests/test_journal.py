@@ -372,3 +372,18 @@ def test_consistent_snapshot_for_backups_while_the_robot_writes(db, tmp_path):
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 1
     j.close()
+
+
+def test_scripts_never_crash_on_a_windows_console(monkeypatch):
+    """18 nov. : sous Windows (cp1252), « → » faisait planter scripts/simulate.py."""
+    import io
+    import sys
+
+    from tradebot.logs import utf8_console
+
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252"))
+    utf8_console()
+    print("perte → 1 R ✅")
+    sys.stdout.flush()
+    assert "→".encode() in raw.getvalue()
