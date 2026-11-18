@@ -1086,3 +1086,17 @@ def test_trailing_stop_moves_to_break_even_at_1r_then_follows_and_never_goes_bac
     b.price = 106.0
     restarted._trail(journal.open_positions()[0], b)
     assert b.updates[-1] == pytest.approx(104.0)
+
+
+def test_trailing_stop_saves_the_new_oco_reference(tmp_path):
+    """Audit sécu n° 4 : OCO reposé par le stop suiveur -> son identifiant est journalisé
+    (sinon, au redémarrage, l'ancien OCO annulé mettrait le marché en pause)."""
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    journal.open_position("t1", "binance", "BTCUSDT", "buy", 1.0, 100.0, 98.0, 110.0,
+                          client_id="BTCUSDT-1", strategy="breakout")
+    eng = Engine(SETTINGS, journal, connectors={}, alert=lambda *_: None, clock=lambda: 1e9)
+    b = TrailBroker()
+    b.position = lambda pid: {"id": pid, "oco_id": "BTCUSDT-1-o2"}
+    b.price = 102.0
+    eng._trail(journal.open_positions()[0], b)
+    assert journal.position("t1")["protection_ref"] == "BTCUSDT-1-o2"

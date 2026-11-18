@@ -123,7 +123,7 @@ def test_deploy_key_is_limited_to_a_forced_command_accepting_only_a_digest():
     assert 'restrict,command="/usr/local/sbin/tradebot-deploy"' in harden
     assert "--shell /usr/sbin/nologin" in harden and "visudo -cf" in harden
     assert "NOPASSWD: /usr/local/sbin/tradebot-deploy-run" in harden
-    assert r"@sha256:[0-9a-f]{64}$" in harden
+    assert r"^ghcr.io/phabris-droid/trading-robot-personnel@sha256:[0-9a-f]{64}$" in harden
     assert 'usermod -aG docker "$DEPLOY_USER"' not in harden
     cd = (ROOT / ".github" / "workflows" / "cd-prod.yml").read_text(encoding="utf-8")
     assert '"$U@$H" deploy' in cd and "scp " not in cd and "bash -s" not in cd

@@ -123,7 +123,8 @@ for _ in 1 2 3; do
     *) echo "variable refusée" >&2; exit 1 ;;
   esac
 done
-[[ "$TRADEBOT_IMAGE" =~ ^ghcr\.io/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]] || \
+# seule l'image de CE dépôt est acceptée (jamais celle d'un autre compte, même par empreinte)
+[[ "$TRADEBOT_IMAGE" =~ ^ghcr\.io/phabris-droid/trading-robot-personnel@sha256:[0-9a-f]{64}$ ]] || \
   { echo "image refusée : ghcr.io/...@sha256:<empreinte> attendu" >&2; exit 1; }
 [[ "$GHCR_USER" =~ ^[A-Za-z0-9-]{1,39}$ ]] || { echo "utilisateur GHCR refusé" >&2; exit 1; }
 [[ "$GHCR_TOKEN" =~ ^[A-Za-z0-9_]{20,255}$ ]] || { echo "jeton GHCR refusé" >&2; exit 1; }

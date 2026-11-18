@@ -392,6 +392,7 @@ class Engine:
             return status
         self._j("update_stop", row["id"], new)
         row["stop"] = new
+        self._save_protection(row, broker)       # OCO reposé : nouvel identifiant gardé
         self.alert("info", f"{row['market']} : stop suiveur déplacé à {new:.6g} (gain "
                            f"protégé : +{(new - entry if buy else entry - new) / r:.1f} R)")
         return status
