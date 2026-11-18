@@ -371,7 +371,25 @@ class CapitalCFD(Broker):
             raise ApiError("solde Capital.com illisible")
         total = balance + (pnl or 0.0)
         self.account_currency = acc.get("currency", self.account_currency)
-        return total
+        # P2 du CDC : compte dans une autre devise -> capital converti en USD au cours du
+        # moment (risque, tailles et disjoncteurs restent en USD comme les prix)
+        return total * self.usd_rate(self.account_currency)
+
+    def usd_rate(self, currency: str) -> float:
+        """Valeur en USD d'une unité de `currency`, lue sur Capital.com (marché XXXUSD, ou
+        USDXXX inversé). Introuvable : ApiError (le capital n'est jamais deviné)."""
+        cur = (currency or "USD").upper()
+        if cur == "USD":
+            return 1.0
+        for epic, invert in ((f"{cur}USD", False), (f"USD{cur}", True)):
+            try:
+                bid, ask = self.quote(epic)
+            except BrokerError:
+                continue
+            mid = (bid + ask) / 2
+            if mid > 0:
+                return 1 / mid if invert else mid
+        raise ApiError(f"cours {cur}/USD introuvable : capital non converti")
 
     def _open_on_platform(self) -> list[dict]:
         out = []

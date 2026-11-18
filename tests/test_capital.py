@@ -553,3 +553,14 @@ def test_audit11_two_absences_in_the_same_cycle_never_close_a_position(mock, cap
     with pytest.raises(BrokerUnavailable):
         cap.close_position("D1")                    # même cycle : pas de 2e absence
     assert cap.positions() != []
+
+
+def test_p2_equity_of_a_eur_account_is_converted_to_usd(mock, cap):
+    """P2 du CDC : compte en EUR -> capital converti en USD au cours EURUSD du moment."""
+    mock.get(host=HOST, path="/api/v1/accounts").respond(json={"accounts": [
+        {"preferred": True, "currency": "EUR", "balance": {"balance": 100.0,
+                                                           "profitLoss": 0.0}}]})
+    assert cap.equity() == pytest.approx(100.0 * (1.0800 + 1.0801) / 2)
+    assert cap.account_currency == "EUR"
+    with pytest.raises(ApiError, match="introuvable"):
+        cap.usd_rate("XYZ")

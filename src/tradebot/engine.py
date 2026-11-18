@@ -223,8 +223,19 @@ class Engine:
         currency = str(getattr(broker, "account_currency", "") or "").upper()
         if currency in ("", ACCOUNT_CURRENCY):
             return
-        self.alert("critical", f"{name} : compte en {currency}, pas en {ACCOUNT_CURRENCY} — "
-                               "tailles et risques faussés", key=f"devise:{name}")
+        try:
+            # P2 du CDC : conversion en USD au cours du moment (Capital.com)
+            rate = float(broker.usd_rate(currency))
+            if math.isfinite(rate) and rate > 0:
+                self.alert("info", f"{name} : compte en {currency}, capital converti en "
+                                   f"{ACCOUNT_CURRENCY} (1 {currency} = {rate:.4f} "
+                                   f"{ACCOUNT_CURRENCY})", key=f"devise:{name}")
+                return
+        except Exception:  # noqa: BLE001 - conversion impossible : prudence ci-dessous
+            pass
+        self.alert("critical", f"{name} : compte en {currency}, pas en {ACCOUNT_CURRENCY}, et "
+                               "conversion impossible — tailles et risques faussés",
+                   key=f"devise:{name}")
         if self.settings.mode == "live":
             for m in self.settings.markets:
                 if m.platform == name:

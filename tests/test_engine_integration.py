@@ -1029,3 +1029,20 @@ def test_m4b_equity_is_not_judged_while_an_order_is_uncertain(tmp_path):
     assert eng._equity_ts.get("binance") == seen      # rien de retenu
     assert not eng.breakers.safety_stopped("binance")
     assert any("capital non évalué" in m for _, m in alerts)
+
+
+def test_p2_non_usd_account_is_converted_not_paused():
+    """P2 du CDC : conversion possible -> aucune pause, simple information."""
+    class EurBroker:
+        account_currency = "EUR"
+
+        def usd_rate(self, cur):
+            return 1.08
+
+    alerts = []
+    eng = Engine(SETTINGS.model_copy(update={"mode": "live"}), None,
+                 connectors={"capital": EurBroker},
+                 alert=lambda lvl, msg: alerts.append((lvl, msg)), clock=lambda: 1e9)
+    eng._connect(int(1e9))
+    assert eng.paused == {}
+    assert any(lvl == "info" and "converti" in msg for lvl, msg in alerts)
