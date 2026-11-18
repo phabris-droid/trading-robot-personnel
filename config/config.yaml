@@ -201,10 +201,10 @@ validation:                        # scripts/validate_markets.py (CDC §3)
   min_trades: 20
   warmup_candles: 300
   start_equity: 100                # conditions réelles : 100 $ par plateforme (CDC §1)
-  capital_min_qty:                 # taille minimale Capital.com (CDC §2 ; à vérifier J1)
-    EURUSD: 500
-    GBPUSD: 500
-    GOLD: 1                        # en onces
+  capital_min_qty:                 # taille minimale Capital.com (CDC §2), lue sur l'API démo le 18 nov.
+    EURUSD: 100
+    GBPUSD: 100
+    GOLD: 0.01                     # en onces
   capital_leverage:                # levier particulier (CDC §2 : 30 en forex ; or : 20)
     EURUSD: 30
     GBPUSD: 30
