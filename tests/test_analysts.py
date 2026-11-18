@@ -549,15 +549,39 @@ def test_geo_feeds_are_https_and_config_is_bounded(tmp_path):
     assert G.block_hours == 4 and G.confirm_sources == 3
 
 
-def test_geo_headlines_raised_by_the_ai_follow_the_same_confirmation_rule():
-    """Point 7 : l'IA peut relever un titre géopolitique sans mot-clé ; il faut quand même
-    3 sources pour bloquer."""
-    raised = [NewsItem("Ships turned back in the Strait", T0 - 900, MEDIA[i], "macro", "high")
-              for i in range(3)]
-    v = GeoWatch(G, _geo_cache(raised)).review(_ctx())
-    assert v.blocked and "IA" in v.reason
-    one = [NewsItem("Ships turned back", T0 - 900, MEDIA[0], "macro", "high")]
-    assert GeoWatch(G, _geo_cache(one)).review(_ctx()).blocked is False
+def test_geo_ai_alone_never_groups_unrelated_headlines_into_an_event():
+    """Audits du 18 nov. : trois titres sans mot-clé commun (séisme, Fed, élection) relevés
+    « forts » ne forment jamais un événement : seuls les mots-clés comptent."""
+    raised = [NewsItem(t, T0 - 900, MEDIA[i], "macro", "high") for i, t in enumerate(
+        ["Earthquake hits coast", "Fed holds rates", "Election results delayed"])]
+    assert GeoWatch(G, _geo_cache(raised)).review(_ctx()).blocked is False
+
+
+def test_geo_latest_confirmation_counts_not_an_old_one():
+    """Audits du 18 nov. : une vague d'hier ne masque pas celle d'aujourd'hui."""
+    old = [_item("New tariffs announced", MEDIA[i], 26 * 60) for i in range(1, 4)]
+    new = [_item("Tariff escalation", MEDIA[i], 20) for i in range(1, 4)]
+    v = GeoWatch(G, _geo_cache(old + new)).review(_ctx())
+    assert v.blocked and "Tariff escalation" in v.reason
+
+
+def test_geo_one_organisation_counts_once_even_with_two_feeds():
+    """Les deux flux de la Maison-Blanche = une seule organisation (poids 2 < 3)."""
+    items = [_item("Executive Order on tariffs", G.official_feeds[0], 30),
+             _item("Presidential action: tariffs", G.official_feeds[1], 25)]
+    assert GeoWatch(G, _geo_cache(items)).review(_ctx()).blocked is False
+
+
+def test_geo_keywords_match_whole_words():
+    from tradebot.analysts.geopolitics import matched_keywords
+
+    kws = list(G.keywords)
+    assert matched_keywords("Coupon sales and couples", kws) == []
+    assert matched_keywords("Assets immobilized by court", kws) == []
+    assert "coup" in matched_keywords("Military coup in the capital", kws)
+    assert "sanction" in matched_keywords("New sanctions on oil", kws)
+    both = matched_keywords("Tariffs and sanctions announced", kws)
+    assert "tariff" in both and "sanction" in both
 
 
 def test_geo_french_headlines_are_understood():

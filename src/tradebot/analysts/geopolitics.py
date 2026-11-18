@@ -14,12 +14,14 @@ et ne modifie jamais rien. Sources en panne trop longtemps : erreur (bloquante e
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from tradebot.analysts.base import Advisor, AdvisorContext, Verdict
 
 STALE_REFRESHES = 3
-AI_THEME = "signalé par l'IA"
+SHORT_KEYWORD = 4                   # mot-clé court (« coup ») : mot entier exigé
 
 
 @dataclass(frozen=True)
@@ -30,34 +32,57 @@ class GeoEvent:
     title: str                      # premier titre officiel, sinon le premier titre
 
 
-def matched_keyword(title: str, keywords: list[str]) -> str | None:
+def _pattern(keyword: str) -> re.Pattern:
+    """Début de mot exigé (« mobiliz » ne trouve pas « immobilized ») ; mot entier pour les
+    mots-clés courts (« coup » ne trouve pas « coupon ») ; sinon préfixe (« sanction » couvre
+    « sanctions »)."""
+    k = re.escape(keyword.lower())
+    end = r"(?!\w)" if len(keyword) <= SHORT_KEYWORD else ""
+    return re.compile(rf"(?<!\w){k}{end}")
+
+
+def matched_keywords(title: str, keywords: list[str]) -> list[str]:
     low = title.lower()
-    return next((k for k in keywords if k.lower() in low), None)
+    return [k for k in keywords if _pattern(k).search(low)]
+
+
+def matched_keyword(title: str, keywords: list[str]) -> str | None:
+    found = matched_keywords(title, keywords)
+    return found[0] if found else None
+
+
+def organisation(url: str) -> str:
+    """Une organisation = un nom de site : les deux flux de la Maison-Blanche comptent pour
+    une seule source."""
+    host = urlsplit(url).netloc.lower()
+    return host[4:] if host.startswith("www.") else host
 
 
 def detect_events(items: list, official: set[str], keywords: list[str], confirm: int,
                   window_s: float) -> list[GeoEvent]:
-    """items : NewsItem (title, published_ts, source). Pour chaque mot-clé, premier instant
-    où le poids des sources distinctes de la fenêtre atteint `confirm` (officielle = 2)."""
+    """items : NewsItem (title, published_ts, source). Pour chaque mot-clé, DERNIER instant où
+    le poids des organisations distinctes de la fenêtre atteint `confirm` (organisation
+    officielle = 2). Un titre compte pour chacun des mots-clés qu'il contient. Seuls les
+    mots-clés comptent : l'IA ne peut pas, seule, regrouper des sujets différents."""
+    official_orgs = {organisation(u) for u in official}
     by_kw: dict[str, list] = {}
     for it in items:
-        kw = matched_keyword(it.title, keywords)
-        if kw is None and getattr(it, "impact", "normal") == "high":
-            kw = AI_THEME                       # relevé par l'IA : même règle des N sources
-        if kw is not None:
+        for kw in matched_keywords(it.title, keywords):
             by_kw.setdefault(kw, []).append(it)
     events: list[GeoEvent] = []
     for kw, hits in by_kw.items():
         hits.sort(key=lambda x: x.published_ts)
+        latest: GeoEvent | None = None
         for i, last in enumerate(hits):
             window = [h for h in hits[:i + 1] if last.published_ts - h.published_ts <= window_s]
-            sources = {h.source for h in window}
-            weight = sum(2 if s in official else 1 for s in sources)
+            orgs = {organisation(h.source) for h in window}
+            weight = sum(2 if o in official_orgs else 1 for o in orgs)
             if weight >= confirm:
-                first = next((h for h in window if h.source in official), window[0])
-                events.append(GeoEvent(kw, last.published_ts, tuple(sorted(sources)),
-                                       first.title[:200]))
-                break                                   # un événement par mot-clé suffit
+                first = next((h for h in window if organisation(h.source) in official_orgs),
+                             window[0])
+                latest = GeoEvent(kw, last.published_ts, tuple(sorted(orgs)), first.title[:200])
+        if latest is not None:
+            events.append(latest)               # la confirmation la plus récente compte
     return sorted(events, key=lambda e: e.ts)
 
 

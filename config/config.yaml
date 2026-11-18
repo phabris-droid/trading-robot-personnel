@@ -130,8 +130,9 @@ analysts:
       - https://www.whitehouse.gov/news/feed/
       - https://www.whitehouse.gov/presidential-actions/feed/
       - https://www.war.gov/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=945&max=10
-      - https://tass.com/rss/v2.xml        # Kremlin (en.kremlin.ru refuse HTTPS)
     media_feeds:                   # grandes chaînes (CNN n'a pas de flux HTTPS)
+      - https://tass.com/rss/v2.xml        # Kremlin via l'agence TASS (en.kremlin.ru refuse HTTPS) :
+                                           # média d'État, compté comme un média (pas double)
       - https://feeds.nbcnews.com/nbcnews/public/world
       - https://www.cnbc.com/id/100727362/device/rss/rss.html
       - https://www.cbsnews.com/latest/rss/world

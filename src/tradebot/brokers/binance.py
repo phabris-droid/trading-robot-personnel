@@ -836,10 +836,24 @@ class BinanceSpot(Broker):
                                          filled):
             return "closed_by_platform"
         pos.status = "unprotected"
-        pos.stop = float(new_stop)
+        old_stop, pos.stop = pos.stop, float(new_stop)
         f = self.filters(pos.symbol)
         held = f.floor_qty(min(pos.qty, self._robot_free(pos, f)))
-        self._place_oco(pos, held)
+        try:
+            self._place_oco(pos, held)
+        except OrderUncertain:
+            raise                                # recherché au cycle suivant, jamais renvoyé
+        except BrokerError:
+            # CDC §6 : jamais sans stop. Ancien stop reposé ; sinon vente aussitôt
+            pos.stop = old_stop
+            try:
+                self._place_oco(pos, held)
+            except OrderUncertain:
+                raise
+            except BrokerError:
+                self._sell(pos, held)
+                return "closed_no_stop"
+            return "ok"                          # ancien stop en place : rien n'a bougé
         return "replaced"
 
     def close_position(self, position_id: str) -> None:

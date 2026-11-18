@@ -1100,3 +1100,20 @@ def test_trailing_stop_saves_the_new_oco_reference(tmp_path):
     b.price = 102.0
     eng._trail(journal.open_positions()[0], b)
     assert journal.position("t1")["protection_ref"] == "BTCUSDT-1-o2"
+
+
+def test_m4b_pause_of_breakers_is_limited_to_30_minutes(tmp_path):
+    """Audit du 18 nov. : un ordre incertain ne masque jamais les disjoncteurs plus de 30 min."""
+    now = {"t": 1e9}
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo", clock=lambda: now["t"])
+    broker = FakeBroker(DATA)
+    eng = Engine(SETTINGS, journal, connectors={"binance": lambda: broker},
+                 alert=lambda *_: None, clock=lambda: now["t"])
+    eng._connect(int(now["t"]))
+    journal.save_order(client_id="BTCUSDT-9", platform="binance", market="BTCUSDT", side="buy",
+                       qty=0.001, status="uncertain", stop=1.0, target=1e6, strategy="x")
+    eng._read_equity()
+    assert "binance" not in eng._equity_ts                # jugement suspendu
+    now["t"] += 31 * 60
+    eng._read_equity()
+    assert eng._equity_ts["binance"] == now["t"]          # de nouveau évalué

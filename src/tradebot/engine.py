@@ -246,8 +246,11 @@ class Engine:
     def _read_equity(self) -> None:
         for name, broker in self.brokers.items():
             try:
+                limit = self.settings.engine.uncertain_order_pause_minutes * 60
+                # 30 min au plus : au-delà, les disjoncteurs jugent de nouveau (audit du 18 nov.)
                 uncertain = [o for o in (self._j("orders", "uncertain") or [])
-                             if o["platform"] == name]
+                             if o["platform"] == name
+                             and self._clock() - float(o.get("created_ts") or 0) < limit]
                 if uncertain:
                     # M4-b : un ordre incertain (achat peut-être exécuté) fausse le capital lu :
                     # il n'est ni retenu ni évalué par les disjoncteurs tant qu'il n'est pas
@@ -389,6 +392,11 @@ class Engine:
             return None
         status = broker.update_stop(row["id"], new)
         if status == "closed_by_platform":
+            return status
+        if status == "closed_no_stop":            # nouvel et ancien stop refusés : vendue
+            self._record_close(row, broker, "stop suiveur impossible : fermée aussitôt")
+            return "closed_by_platform"
+        if status != "replaced":                  # ancien stop conservé chez la plateforme
             return status
         self._j("update_stop", row["id"], new)
         row["stop"] = new
