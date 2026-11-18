@@ -138,17 +138,21 @@ Conformité au cahier des charges : [docs/CONFORMITE_CDC.md](docs/CONFORMITE_CDC
 analyse initiale : [docs/ETAPE_0_ANALYSE.md](docs/ETAPE_0_ANALYSE.md) ·
 déploiement : [docs/DEPLOIEMENT.md](docs/DEPLOIEMENT.md).
 
-### Encore ouvertes (aucune critique ni majeure ; décisions : [docs/DECISIONS.md](docs/DECISIONS.md))
+### Encore ouvertes (aucune ne dépend du code ; décisions : [docs/DECISIONS.md](docs/DECISIONS.md))
 
-| Gravité | # | Fichier | Erreur |
-|---|---|---|---|
-| 🟠 majeure (manuelle) | M3-CD | CD `prod` | Pipeline de mise en ligne jamais exécuté : environnement `production`, secrets du VPS, utilisateur `deploy` à créer (`harden_vps.sh --deploy-key`). |
-| ⚪ mineure | M4-b | `brokers/binance.py` | USDT d'un achat incertain non comptés jusqu'à sa résolution ; USDT personnels comptés comme capital (limite CDC §11). |
-| ⚪ mineure | n7 / n8 / n9 | divers | Historique OCO limité à 100 listes ; actions Docker exercées par la seule CD ; liste `rejected` jamais vidée. |
+Cahier des charges final : **[docs/CAHIER_DES_CHARGES_V3.md](docs/CAHIER_DES_CHARGES_V3.md)**.
 
-Valeurs choisies sans chiffre du CDC, **à confirmer** : `costs.*.stop_slippage_pct`,
-`engine.signal_max_age_minutes` (15), `engine.equity_save_minutes` (5), marge de clôture des
-bougies Capital.com (2 min), attente anti-force-brute (1 s doublée jusqu'à 5 min).
+| Point | Ce qu'il faut | Qui |
+|---|---|---|
+| Tests sur les vraies API (Binance, Capital.com, Claude, Telegram) | clés démo dans `.env`, puis `python scripts/check_connections.py` | propriétaire |
+| Validation des marchés Capital.com (EURUSD, GBPUSD, GOLD) | clés démo Capital.com, puis `scripts/validate_markets.py` | propriétaire |
+| Première mise en ligne (CD `prod`) | secrets de l'environnement `production`, `harden_vps.sh --deploy-key …` | propriétaire |
+| CNN et site du Kremlin | aucune connexion sécurisée (HTTPS) : remplacés par TASS et d'autres chaînes | limite externe |
+| USDT personnels comptés comme capital du robot sur Binance | sous-compte Binance dédié au robot (recommandé) | limite connue (CDC §11) |
+
+Corrigés le 18 novembre 2026 : historique OCO complet (n7), actions Docker exercées en CI
+(n8), écritures refusées bornées (n9), capital non jugé pendant un ordre incertain (M4-b),
+conversion de devise Capital.com (P2), stop suiveur après 1 R (P2).
 
 ### Contre-audit (2ᵉ passage) : erreur → commit → test
 

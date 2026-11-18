@@ -1,5 +1,9 @@
 # Conformité au cahier des charges (V2, 5 nov. 2026)
 
+> Analyse de la V2. La version finale du cahier des charges, qui intègre toutes les décisions
+> et fonctions ajoutées depuis, est [CAHIER_DES_CHARGES_V3.md](CAHIER_DES_CHARGES_V3.md) ; les
+> améliorations P2 marquées « non développées » ci-dessous sont livrées depuis le 18 novembre.
+
 Analyse du code de la branche `dev` au 2026-11-09, après les corrections de l'étape 11
 (contre-audits trading, sécurité et tests adverses). Chaque exigence a été vérifiée dans le
 code et la configuration, pas seulement dans la documentation.
