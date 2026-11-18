@@ -577,3 +577,14 @@ def test_trailing_stop_is_moved_at_capital_by_put(mock, cap):
     import json as _json
     assert _json.loads(put.calls.last.request.content)["stopLevel"] == 1.0801
     assert cap.position(pid)["stop"] == 1.0801
+
+
+def test_currency_conversion_works_on_a_closed_market_and_keeps_the_last_rate(mock, cap):
+    """Audit du 18 nov. : compte en EUR le week-end (marché fermé) -> conversion quand même."""
+    closed = json.loads(json.dumps(MARKET))
+    closed["snapshot"]["marketStatus"] = "CLOSED"
+    route = mock.get(host=HOST, path="/api/v1/markets/EURUSD").respond(json=closed)
+    assert cap.usd_rate("EUR") == pytest.approx((1.0800 + 1.0801) / 2)
+    route.respond(503)
+    mock.get(host=HOST, path="/api/v1/markets/USDEUR").respond(404, json={"errorCode": "x"})
+    assert cap.usd_rate("EUR") == pytest.approx((1.0800 + 1.0801) / 2)   # dernier cours

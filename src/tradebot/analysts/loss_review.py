@@ -89,7 +89,9 @@ def news_around(news_cache, opened_ts: float, closed_ts: float) -> list[str]:
 def review_loss(position: dict, trade: dict, decisions: list[dict], candles, news_cache,
                 validation_verdict: str | None, now: float) -> LossReview:
     side, entry, stop = position["side"], float(position["entry"]), float(position["stop"])
-    risk_unit = abs(entry - stop)
+    # R initial (stop suiveur : le stop final n'est plus la mise risquée de départ)
+    risk_unit = float(position.get("initial_risk_unit") or abs(entry - stop))
+    trailed = risk_unit > 0 and abs(entry - stop) < risk_unit * 0.99
     risk = risk_unit * float(position["qty"])
     pnl, fees = float(trade["pnl"]), float(trade["fees"])
     opened, closed = float(position["opened_ts"]), float(position.get("closed_ts") or now)
@@ -113,9 +115,12 @@ def review_loss(position: dict, trade: dict, decisions: list[dict], candles, new
                          "commission (Capital.com).")
     if best >= GIVEN_BACK_R:
         rv.causes.append("gain_rendu")
-        rv.advice.append(f"Le trade a atteint +{best:.1f} R avant de se retourner : un stop "
-                         "suiveur (amélioration P2 du cahier des charges) aurait protégé ce "
-                         "gain.")
+        rv.advice.append(
+            f"Le trade a atteint +{best:.1f} R avant de se retourner : le stop suiveur était "
+            "actif et a limité la perte ; un suivi plus serré (trail_r) protégerait davantage, à "
+            "valider d'abord sur l'historique." if trailed else
+            f"Le trade a atteint +{best:.1f} R avant de se retourner : le stop suiveur ne "
+            "s'applique pas à cette stratégie, ou n'était pas encore activé (1 R).")
     elif best < FALSE_START_R and "stop" in reason:
         rv.causes.append("faux_depart")
         rv.advice.append("Le prix n'est jamais parti dans le bon sens (fausse cassure ou "

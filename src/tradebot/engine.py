@@ -370,8 +370,13 @@ class Engine:
             return None
         key = f"trail:{row['id']}"
         state: dict = {}
-        with suppress(ValueError, TypeError):
-            state = json.loads(self._j("get_state", key) or "{}") or {}
+        if self.journal is not None:
+            try:
+                raw = self.journal.get_state(key)
+            except JournalUnavailable:
+                return None          # audit du 18 nov. : jamais de R recalculé sur un stop déplacé
+            with suppress(ValueError, TypeError):
+                state = json.loads(raw or "{}") or {}
         buy = row["side"] == "buy"
         entry, stop = float(row["entry"]), float(row["stop"])
         r = float(state.get("r") or abs(entry - stop))
@@ -466,6 +471,9 @@ class Engine:
             now = self._clock()
             position = dict(row, closed_ts=now, close_reason=reason,
                             opened_ts=row.get("opened_ts") or now)
+            with suppress(Exception):            # R initial gardé par le stop suiveur
+                trail = json.loads(self._j("get_state", f"trail:{row['id']}") or "{}")
+                position["initial_risk_unit"] = float(trail.get("r") or 0) or None
             candle = lr.entry_candle_ts(row.get("client_id", ""))
             decisions = (self._j("decisions_for", row["market"], candle) or []
                          if candle is not None else [])

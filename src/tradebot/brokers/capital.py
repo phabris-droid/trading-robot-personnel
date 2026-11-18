@@ -139,6 +139,7 @@ class CapitalCFD(Broker):
         self._last_request = float("-inf")
         self.account_currency = ""
         self._server_offset: float | None = None   # R10 : heure serveur - heure locale (s)
+        self._last_rates: dict[str, float] = {}     # dernier cours de conversion obtenu
         self._markets: dict[str, dict] = {}
         self._positions: dict[str, CapitalPosition] = {}
         self._pending: dict[str, dict] = {}      # client_id -> ordre au statut incertain
@@ -383,12 +384,18 @@ class CapitalCFD(Broker):
             return 1.0
         for epic, invert in ((f"{cur}USD", False), (f"USD{cur}", True)):
             try:
-                bid, ask = self.quote(epic)
+                # dernier cours connu, même marché fermé (week-end) : la conversion du
+                # capital n'a pas besoin d'un marché ouvert (audit du 18 nov.)
+                snap = self.market(epic, refresh=True).get("snapshot", {})
             except BrokerError:
                 continue
-            mid = (bid + ask) / 2
-            if mid > 0:
-                return 1 / mid if invert else mid
+            bid, ask = _num(snap.get("bid")), _num(snap.get("offer"))
+            if bid and ask and 0 < bid <= ask:
+                mid = (bid + ask) / 2
+                self._last_rates[cur] = 1 / mid if invert else mid
+                return self._last_rates[cur]
+        if cur in self._last_rates:                  # panne passagère : dernier cours obtenu
+            return self._last_rates[cur]
         raise ApiError(f"cours {cur}/USD introuvable : capital non converti")
 
     def _open_on_platform(self) -> list[dict]:

@@ -46,11 +46,11 @@ def revalidate(settings, history: Callable, now: float | None = None) -> list[di
         try:
             df = history(market, start, end)
         except Exception as exc:  # noqa: BLE001
-            rows.append({"marche": market.symbol, "verdict": "A_REVOIR",
+            rows.append({"marche": market.symbol, "verdict": "A_REVOIR", "erreur_donnees": True,
                          "note": f"données indisponibles ({type(exc).__name__})"})
             continue
         if df is None or len(df) < v.warmup_candles + 2:
-            rows.append({"marche": market.symbol, "verdict": "A_REVOIR",
+            rows.append({"marche": market.symbol, "verdict": "A_REVOIR", "erreur_donnees": True,
                          "note": "données insuffisantes"})
             continue
         res = run_backtest_real(df, market, settings)
@@ -60,6 +60,19 @@ def revalidate(settings, history: Callable, now: float | None = None) -> list[di
                      "trades": res.n, "profit_factor": None if math.isinf(pf) else round(pf, 2),
                      "note": "12 mois"})
     return rows
+
+
+def keep_previous(before: dict[str, str] | None, rows: list[dict]) -> list[dict]:
+    """Panne passagère des données : le verdict précédent est conservé (jamais un marché
+    rentable coupé une semaine parce qu'une source était en panne le dimanche)."""
+    before = before or {}
+    out = []
+    for r in rows:
+        if r.get("erreur_donnees") and r["marche"] in before:
+            r = dict(r, verdict=before[r["marche"]],
+                     note=f"{r.get('note', '')} — verdict précédent conservé")
+        out.append(r)
+    return out
 
 
 def write_verdicts(rows: list[dict], path: str | Path = VALIDATION_PATH) -> None:
@@ -76,6 +89,8 @@ def changes(before: dict[str, str] | None, rows: list[dict]) -> list[str]:
     before = before or {}
     out = []
     for r in rows:
+        if r.get("erreur_donnees"):
+            continue                            # signalé à part (données indisponibles)
         old, new = before.get(r["marche"]), r["verdict"]
         detail = (f"profit factor {r['profit_factor']} sur {r['trades']} trades"
                   if "trades" in r else r.get("note", ""))

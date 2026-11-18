@@ -15,7 +15,13 @@ import httpx
 from tradebot.analysts.geopolitics import GeoWatch
 from tradebot.interfaces import reports
 from tradebot.logs import log
-from tradebot.validation import changes, load_verdicts, revalidate, write_verdicts
+from tradebot.validation import (
+    changes,
+    keep_previous,
+    load_verdicts,
+    revalidate,
+    write_verdicts,
+)
 
 ANNOUNCE_BEFORE_S = 3600
 AUDIT_CANDLES = 1000          # ~6 semaines : 7 jours audités + fenêtre de chauffe des stratégies
@@ -88,10 +94,15 @@ class Jobs:
             if market.symbol not in histories:
                 histories[market.symbol] = self.history(market, start, end)
             return histories[market.symbol]
-        rows = revalidate(self.engine.settings, history, self.engine.now())
+        rows = keep_previous(before, revalidate(self.engine.settings, history,
+                                                self.engine.now()))
         write_verdicts(rows, self.engine.validation_path)
         for message in changes(before, rows):
             self.notify(message)
+        missing = [r["marche"] for r in rows if r.get("erreur_donnees")]
+        if missing:
+            self.notify(f"⚠️ Validation : données indisponibles pour {', '.join(missing)} — "
+                        "verdict précédent conservé, nouvel essai dimanche prochain")
         ok = [r["marche"] for r in rows if r["verdict"] == "OK"]
         self.notify(f"🔎 Validation hebdomadaire (12 mois) : {len(ok)}/{len(rows)} marché(s) "
                     f"rentable(s){' : ' + ', '.join(ok) if ok else ''}. "

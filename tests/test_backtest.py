@@ -484,3 +484,16 @@ def test_reference_watch_shows_gross_profit_factor_and_cost_per_trade(tmp_path, 
     assert s["pf_brut"] >= s["pf"] and s["cout_r"] > 0
     _summary, path = report([s], None, {"BTCUSDT"}, T0, tmp_path)
     assert "PF avant frais" in path.read_text(encoding="utf-8")
+
+
+def test_temporary_data_outage_keeps_the_previous_verdict():
+    """Audit du 18 nov. : panne des données le dimanche -> verdict précédent conservé, aucun
+    message « n'est plus rentable »."""
+    from tradebot.validation import changes, keep_previous
+
+    rows = [{"marche": "ETHUSDT", "verdict": "A_REVOIR", "erreur_donnees": True,
+             "note": "données indisponibles (ConnectError)"}]
+    kept = keep_previous({"ETHUSDT": "OK"}, rows)
+    assert kept[0]["verdict"] == "OK" and "conservé" in kept[0]["note"]
+    assert changes({"ETHUSDT": "OK"}, kept) == []
+    assert keep_previous(None, rows)[0]["verdict"] == "A_REVOIR"   # jamais validé : prudence
