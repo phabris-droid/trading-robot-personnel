@@ -132,7 +132,7 @@ def run_backtest(candles: pd.DataFrame, market, settings, start_equity: float = 
             elif exit_fn(window, {"side": pos["side"]}, params, atr_n):
                 close(float(nxt["open"]), nxt["ts"], "sortie anticipée")
                 exited_now = True
-            elif risk.trailing_stop.enabled:
+            elif risk.trailing_stop.enabled and market.strategy in risk.trailing_stop.strategies:
                 # stop suiveur (P2), comme le moteur : meilleur prix de CLÔTURE (prudent), stop
                 # remonté à partir de activate_r R de gain, jamais en arrière
                 tcfg, r = risk.trailing_stop, pos["r"]
@@ -142,7 +142,9 @@ def run_backtest(candles: pd.DataFrame, market, settings, start_equity: float = 
                 if r > 0 and gain >= tcfg.activate_r * r:
                     new = (pos["best"] - tcfg.trail_r * r if buy
                            else pos["best"] + tcfg.trail_r * r)
-                    if (buy and new > pos["stop"]) or (not buy and new < pos["stop"]):
+                    # même seuil que le moteur : déplacement d'au moins 0,1 R
+                    moved = (new > pos["stop"] + 0.1 * r) if buy else (new < pos["stop"] - 0.1 * r)
+                    if moved:
                         pos["stop"] = new
         if pos is not None or exited_now:
             continue

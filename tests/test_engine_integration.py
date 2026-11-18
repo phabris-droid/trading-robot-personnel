@@ -1057,6 +1057,11 @@ class TrailBroker:
     def quote(self, symbol):
         return self.price, self.price + 0.01
 
+    def candles(self, symbol, limit=3):          # clôture de la dernière bougie = prix
+        return pd.DataFrame({"ts": [0], "close_ts": [3600], "open": [self.price],
+                             "high": [self.price], "low": [self.price],
+                             "close": [self.price], "volume": [1.0]})
+
     def update_stop(self, pid, new):
         self.updates.append(new)
         return "replaced"
@@ -1117,3 +1122,15 @@ def test_m4b_pause_of_breakers_is_limited_to_30_minutes(tmp_path):
     now["t"] += 31 * 60
     eng._read_equity()
     assert eng._equity_ts["binance"] == now["t"]          # de nouveau évalué
+
+
+def test_trailing_stop_never_applies_to_mean_reversion(tmp_path):
+    """CDC §11 et mesure du 18 nov. : stop suiveur réservé à la cassure et à la tendance."""
+    journal = Journal(tmp_path / "tradebot_demo.db", "demo")
+    journal.open_position("m1", "binance", "SOLUSDT", "buy", 1.0, 100.0, 98.0, 110.0,
+                          client_id="SOLUSDT-1", strategy="mean_reversion")
+    eng = Engine(SETTINGS, journal, connectors={}, alert=lambda *_: None, clock=lambda: 1e9)
+    b = TrailBroker()
+    b.price = 105.0
+    eng._trail(journal.open_positions()[0], b)
+    assert b.updates == []

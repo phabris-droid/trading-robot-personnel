@@ -64,6 +64,7 @@ risk:
     enabled: true
     activate_r: 1.0                # à +1 R, le stop remonte au prix d'entrée…
     trail_r: 1.0                   # …puis suit le meilleur prix à 1 R (jamais en arrière)
+    strategies: [trend_ema, breakout]   # cassure et tendance seulement (CDC §11)
 
 analysts:
   news_watch:

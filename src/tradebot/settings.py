@@ -180,6 +180,9 @@ class TrailingStopCfg(Strict):
     enabled: bool
     activate_r: float = Field(ge=0.5, le=5)
     trail_r: float = Field(ge=0.25, le=5)
+    # CDC §11 : « protéger les gains de la cassure et de la tendance » (pas du retour à la
+    # moyenne, dont l'objectif est proche : mesuré le 18 nov., le stop suiveur y coupe les gains)
+    strategies: list[Literal["trend_ema", "mean_reversion", "breakout"]] = Field(min_length=1)
 
 
 class Risk(Strict):

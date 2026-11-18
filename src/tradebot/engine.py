@@ -365,7 +365,8 @@ class Engine:
         d'entrée pour 1 R), puis suit le meilleur prix à trail_r R ; il ne recule jamais.
         R = distance initiale entrée-stop, gardée dans le journal (redémarrage compris)."""
         cfg = self.settings.risk.trailing_stop
-        if not cfg.enabled or not hasattr(broker, "update_stop"):
+        if (not cfg.enabled or not hasattr(broker, "update_stop")
+                or row.get("strategy") not in cfg.strategies):
             return None
         key = f"trail:{row['id']}"
         state: dict = {}
@@ -378,8 +379,14 @@ class Engine:
             return None
         bid, ask = broker.quote(row["market"])
         price = bid if buy else ask
+        # meilleur prix = CLÔTURE de la dernière bougie close, exactement comme le backtest
+        # (audit du 18 nov. : sinon la validation mesure un autre système)
+        df = broker.candles(row["market"], limit=3)
+        if df is None or df.empty:
+            return None
+        close = float(df["close"].iloc[-1])
         best = float(state.get("best", entry))
-        best = max(best, price) if buy else min(best, price)
+        best = max(best, close) if buy else min(best, close)
         if state.get("best") != best or state.get("r") != r:
             self._j("set_state", key, json.dumps({"r": r, "best": best}))
         gain = (best - entry) if buy else (entry - best)
