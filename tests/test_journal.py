@@ -342,3 +342,15 @@ def test_failing_alert_never_breaks_the_journal(db):
     with pytest.raises(ValueError):
         j._write(_Op("INSERT INTO positions (id) VALUES ('x')", (), critical=True))
     j.log_event("info", "toujours utilisable")
+
+
+def test_n9_rejected_writes_list_is_bounded(db):
+    """n9 : la liste des écritures refusées ne grossit jamais sans fin."""
+    from tradebot.journal import MAX_REJECTED
+
+    j = Journal(db, "demo")
+    for i in range(MAX_REJECTED + 20):
+        with pytest.raises(ValueError):
+            j._write(_Op("INSERT INTO trades (position_id) VALUES (?)", (f"x{i}",),
+                         critical=True))
+    assert len(j.rejected) == MAX_REJECTED

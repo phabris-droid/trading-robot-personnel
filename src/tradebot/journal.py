@@ -134,6 +134,7 @@ MIGRATIONS: list[str] = [
 ]
 SCHEMA_VERSION = len(MIGRATIONS)
 
+MAX_REJECTED = 100                  # n9 : écritures refusées gardées pour l'examen
 ORDER_STATUSES = frozenset({"pending", "uncertain", "filled", "rejected", "cancelled"})
 EVENT_LEVELS = frozenset({"info", "warning", "error", "critical"})
 MAX_PENDING = 50_000   # au-delà, seules les écritures secondaires sont abandonnées
@@ -319,6 +320,7 @@ class Journal:
                 raise JournalUnavailable(str(exc), len(self._pending)) from None
             self._pending.clear()
             self.rejected.extend(rejected)
+            del self.rejected[:-MAX_REJECTED]     # n9 : liste bornée (les plus récentes)
             for op in rejected:
                 self._report("error", "écriture refusée par le schéma du journal : "
                                       f"{op.sql.split('(')[0].strip()}")
