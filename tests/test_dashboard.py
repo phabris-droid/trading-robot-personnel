@@ -159,3 +159,18 @@ def test_short_password_never_opens_the_dashboard_even_in_demo(clock):
         assert r.status_code == 503 and "12" in r.json()["detail"]
     finally:
         configure("", "")
+
+
+def test_ipv6_attackers_are_limited_per_64_block_and_memory_never_resets_all(client, clock,
+                                                                            monkeypatch):
+    """Audit sécurité du 18 nov. : rotation d'adresses IPv6 inutile ; mémoire bornée sans
+    jamais effacer tous les blocages d'un coup."""
+    a1 = TestClient(app, client=("2001:db8:1:2::10", 4444))
+    a2 = TestClient(app, client=("2001:db8:1:2::99", 4444))   # même /64
+    a1.get("/", auth=("admin", "faux"))
+    assert a2.get("/", auth=GOOD).status_code == 429
+    monkeypatch.setattr(dashboard, "MAX_TRACKED_IPS", 3)
+    for i in range(5):
+        TestClient(app, client=(f"93.184.216.{i + 1}", 4444)).get("/", auth=("admin", "x"))
+    assert len(dashboard._auth.failures) == 3
+    assert "93.184.216.5" in dashboard._auth.failures             # les plus récentes restent

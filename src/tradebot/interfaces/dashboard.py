@@ -84,6 +84,18 @@ def client_ip(request: Request) -> str:
     return peer
 
 
+def limit_key(ip: str) -> str:
+    """Clé de la limite d'essais : l'adresse IPv4, ou le bloc /64 en IPv6 (un attaquant y
+    dispose de milliards d'adresses : audit du 18 nov.)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if addr.version == 6:
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    return ip
+
+
 def require_auth(request: Request,
                  creds: HTTPBasicCredentials | None = Depends(_basic)) -> str:
     challenge = {"WWW-Authenticate": 'Basic realm="tradebot", charset="UTF-8"'}
@@ -95,7 +107,7 @@ def require_auth(request: Request,
                                  f"{MIN_PASSWORD_LEN} caractères")
     if creds is None:
         raise HTTPException(401, "identification requise", headers=challenge)
-    ip = client_ip(request)
+    ip = limit_key(client_ip(request))
     with _auth.lock:
         count, until = _auth.failures.get(ip, (0, float("-inf")))
         wait = until - _auth.clock()
@@ -111,10 +123,11 @@ def require_auth(request: Request,
             _auth.failures.pop(ip, None)
         return creds.username
     with _auth.lock:
-        if len(_auth.failures) > MAX_TRACKED_IPS:        # mémoire bornée
-            _auth.failures.clear()
         delay = min(FAILED_LOGIN_INTERVAL_S * 2 ** count, MAX_LOCKOUT_S)
+        _auth.failures.pop(ip, None)                       # replacée en dernier (la plus récente)
         _auth.failures[ip] = (count + 1, _auth.clock() + delay)
+        while len(_auth.failures) > MAX_TRACKED_IPS:       # mémoire bornée : les plus anciennes
+            _auth.failures.pop(next(iter(_auth.failures)))  # partent, jamais tout d'un coup
     raise HTTPException(401, "identifiant ou mot de passe incorrect", headers=challenge)
 
 
