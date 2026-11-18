@@ -99,6 +99,25 @@ else
   fail "$APP_DIR/.env absent"
 fi
 
+# audit sécurité n° 15 du 18 nov. : compte deploy limité à la commande forcée
+if id deploy >/dev/null 2>&1; then
+  rule=$(cat /etc/sudoers.d/tradebot-deploy 2>/dev/null)
+  if [ "$rule" = "deploy ALL=(trader) NOPASSWD: /usr/local/sbin/tradebot-deploy-run" ]; then
+    pass "compte deploy : une seule commande sudo autorisée"
+  else
+    fail "compte deploy : règle sudo absente ou élargie (/etc/sudoers.d/tradebot-deploy)"
+  fi
+  keys=/home/deploy/.ssh/authorized_keys
+  if [ -s "$keys" ] && ! grep -qv '^restrict,command="/usr/local/sbin/tradebot-deploy" ' "$keys"; then
+    pass "compte deploy : chaque clé SSH limitée à la commande forcée"
+  else
+    fail "compte deploy : clé SSH sans restrict,command= (shell ouvert au pipeline)"
+  fi
+fi
+if [ -s /etc/tradebot/backup-key.asc ] && [ -e /root/.tradebot-backup-pass ]; then
+  warn "ancienne phrase de chiffrement encore présente (/root/.tradebot-backup-pass) : la supprimer après avoir gardé une copie hors du serveur si d'anciennes sauvegardes en dépendent"
+fi
+
 # --- sauvegardes et disque ------------------------------------------------------------------------
 latest=$(find "$BACKUP_DIR" -name 'tradebot-*.tgz.gpg' -mtime -1 2>/dev/null | head -n 1)
 if [ -n "$latest" ]; then pass "sauvegarde chiffrée de moins de 24 h"; else fail "aucune sauvegarde de moins de 24 h"; fi

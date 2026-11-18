@@ -172,3 +172,16 @@ def test_backup_archives_a_consistent_sqlite_copy():
     harden = _read("harden_vps.sh")
     assert "python -m tradebot.snapshot" in harden
     assert "--exclude=./*.db --exclude=./*.db-wal --exclude=./*.db-shm" in harden
+
+
+def test_audit_checks_the_deploy_account_and_old_backup_passphrase():
+    """Audit sécurité n° 15 du 18 nov. : l'audit vérifie la règle sudo, la commande forcée
+    de chaque clé du compte deploy et signale l'ancienne phrase de chiffrement."""
+    audit = _read("audit_vps.sh")
+    assert "/etc/sudoers.d/tradebot-deploy" in audit
+    assert 'restrict,command="/usr/local/sbin/tradebot-deploy"' in audit
+    assert "/root/.tradebot-backup-pass" in audit
+    harden = _read("harden_vps.sh")
+    # la règle vérifiée par l'audit est exactement celle posée par harden_vps.sh
+    assert "'%s ALL=(%s) NOPASSWD: /usr/local/sbin/tradebot-deploy-run\n'" in harden
+    assert 'DEPLOY_USER="deploy"' in harden and 'APP_USER="trader"' in harden
