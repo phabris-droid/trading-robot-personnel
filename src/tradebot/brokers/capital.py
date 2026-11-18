@@ -310,14 +310,20 @@ class CapitalCFD(Broker):
         # mesuré sur l'API démo (18 nov.) : 1000 h refusées (error.invalid.max.daterange),
         # 999 h acceptées ; les bornes se chevauchent, les doubles sont retirés par _to_frame
         step = MAX_HISTORY_RANGE_H * HOUR_S
-        t = int(start_ts)
-        while t < end_ts:
-            to = min(int(end_ts), t + step)
+        t, end = int(start_ts), int(end_ts)      # entiers : jamais de requête de durée nulle
+        while t < end:
+            to = min(end, t + step)
             fmt = "%Y-%m-%dT%H:%M:%S"
-            data = self._request("GET", EP_PRICES.format(epic=symbol), params={
-                "resolution": RESOLUTION_1H, "max": MAX_CANDLES,
-                "from": datetime.fromtimestamp(t, UTC).strftime(fmt),
-                "to": datetime.fromtimestamp(to, UTC).strftime(fmt)})
+            try:
+                data = self._request("GET", EP_PRICES.format(epic=symbol), params={
+                    "resolution": RESOLUTION_1H, "max": MAX_CANDLES,
+                    "from": datetime.fromtimestamp(t, UTC).strftime(fmt),
+                    "to": datetime.fromtimestamp(to, UTC).strftime(fmt)})
+            except ApiError as exc:
+                # période sans cotation (week-end, jour férié) : vide, pas une panne
+                if "error.prices.not-found" not in str(exc):
+                    raise
+                data = {}
             prices += data.get("prices", [])
             t = to
         return self._to_frame(prices, None)

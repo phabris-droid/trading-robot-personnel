@@ -610,3 +610,19 @@ def test_history_requests_never_exceed_the_api_date_range(mock, cap):
     cap.history("EURUSD", NOW - 365 * 86_400, NOW - 86_400)
     assert spans and max(spans) < 1000
     assert sum(spans) >= 364 * 24 - 1                      # toute la période est couverte
+
+
+def test_history_never_sends_an_empty_period_and_treats_no_prices_as_empty(mock, cap):
+    """Mesuré sur l'API démo le 18 nov. : une fin non entière ajoutait une requête de durée
+    nulle (404 error.prices.not-found) qui faisait échouer toute la validation."""
+    calls = []
+
+    def handler(request):
+        q = request.url.params
+        calls.append((q["from"], q["to"]))
+        if q["from"] == q["to"] or len(calls) == 1:          # vide ou période sans cotation
+            return httpx.Response(404, json={"errorCode": "error.prices.not-found"})
+        return httpx.Response(200, json={"prices": []})
+    mock.get(host=HOST, path="/api/v1/prices/EURUSD").mock(side_effect=handler)
+    cap.history("EURUSD", NOW - 60 * 86_400 + 0.4, NOW - 86_400 + 0.7)
+    assert calls and all(f != t for f, t in calls)
