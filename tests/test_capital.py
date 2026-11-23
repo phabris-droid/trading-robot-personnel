@@ -626,3 +626,42 @@ def test_history_never_sends_an_empty_period_and_treats_no_prices_as_empty(mock,
     mock.get(host=HOST, path="/api/v1/prices/EURUSD").mock(side_effect=handler)
     cap.history("EURUSD", NOW - 60 * 86_400 + 0.4, NOW - 86_400 + 0.7)
     assert calls and all(f != t for f, t in calls)
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectTimeout("lent"), httpx.Response(503),
+                                     httpx.Response(429, headers={"Retry-After": "1"})])
+def test_session_opening_retries_a_transient_failure(failure, clock):
+    """Mesuré le 23 nov. : l'ouverture de session prenait parfois 5,7 s et échouait au premier
+    essai (« Capital.com : session KO » puis OK quelques secondes après). Elle réessaie
+    désormais comme les lectures."""
+    cap = CapitalCFD("cle-api", "moi@exemple.fr", PASSWORD, f"https://{HOST}", 5,
+                     client=httpx.Client(), sleep=lambda s: None, clock=lambda: clock["now"])
+    with respx.mock() as m:
+        route = m.post(host=HOST, path="/api/v1/session").mock(
+            side_effect=[failure, _session_ok()])
+        cap.login()
+    assert route.call_count == 2 and cap.account_currency == "USD"
+
+
+def test_session_opening_gives_up_after_max_retries(clock):
+    """Panne durable : erreur claire après max_retries essais (jamais de boucle infinie)."""
+    cap = CapitalCFD("cle-api", "moi@exemple.fr", PASSWORD, f"https://{HOST}", 5,
+                     client=httpx.Client(), sleep=lambda s: None, clock=lambda: clock["now"],
+                     max_retries=3)
+    with respx.mock() as m:
+        route = m.post(host=HOST, path="/api/v1/session").mock(
+            side_effect=httpx.ConnectError("coupé"))
+        with pytest.raises(BrokerUnavailable, match="injoignable"):
+            cap.login()
+    assert route.call_count == 3
+
+
+def test_wrong_credentials_are_never_retried(clock):
+    """Identifiants refusés (401) : un seul essai (ne pas risquer un blocage du compte)."""
+    cap = CapitalCFD("cle-api", "moi@exemple.fr", PASSWORD, f"https://{HOST}", 5,
+                     client=httpx.Client(), sleep=lambda s: None, clock=lambda: clock["now"])
+    with respx.mock() as m:
+        route = m.post(host=HOST, path="/api/v1/session").respond(401)
+        with pytest.raises(ApiError, match="refusée"):
+            cap.login()
+    assert route.call_count == 1

@@ -130,7 +130,8 @@ class CapitalCFD(Broker):
         self._key, self._identifier, self._password = api_key, identifier, password
         self.base_url = base_url.rstrip("/")
         self.keepalive_s = keepalive_minutes * 60
-        self._http = client or httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0))
+        # connexion jusqu'à 10 s : ouverture de session mesurée jusqu'à 5,7 s (23 nov.)
+        self._http = client or httpx.Client(timeout=httpx.Timeout(10.0, connect=10.0))
         self.max_retries = max_retries
         self._sleep = sleep
         self._clock = clock
@@ -160,15 +161,32 @@ class CapitalCFD(Broker):
     # --- session ----------------------------------------------------------------------------
 
     def login(self) -> None:
-        """Ouvre une session : CST + X-SECURITY-TOKEN (CDC §2)."""
-        try:
-            resp = self._http.post(f"{self.base_url}{EP_SESSION}",
-                                   headers={H_API_KEY: self._key},
-                                   json={"identifier": self._identifier,
-                                         "password": self._password,
-                                         "encryptedPassword": False})
-        except httpx.HTTPError as exc:
-            raise BrokerUnavailable(f"Capital.com injoignable : {type(exc).__name__}") from None
+        """Ouvre une session : CST + X-SECURITY-TOKEN (CDC §2).
+        Mesuré le 23 nov. : l'ouverture prend parfois 4 à 6 s au lieu de 0,6 s ; un seul essai
+        échouait donc par moments. Comme les lectures : jusqu'à max_retries essais (panne réseau,
+        HTTP 429 ou 5xx), attente 0,5 s puis 1 s… Ouvrir une session n'engage aucun ordre."""
+        attempt = 0
+        while True:
+            attempt += 1
+            retry_in = 0.5 * 2 ** (attempt - 1)
+            try:
+                resp = self._http.post(f"{self.base_url}{EP_SESSION}",
+                                       headers={H_API_KEY: self._key},
+                                       json={"identifier": self._identifier,
+                                             "password": self._password,
+                                             "encryptedPassword": False})
+            except httpx.HTTPError as exc:
+                if attempt >= self.max_retries:
+                    raise BrokerUnavailable(
+                        f"Capital.com injoignable : {type(exc).__name__}") from None
+                self._sleep(retry_in)
+                continue
+            if (resp.status_code == 429 or resp.status_code >= 500) \
+                    and attempt < self.max_retries:
+                self._sleep(max(retry_in, parse_retry_after(resp.headers.get("Retry-After"),
+                                                            self._clock(), default=retry_in)))
+                continue
+            break
         if resp.status_code != 200:
             raise ApiError(f"connexion Capital.com refusée (HTTP {resp.status_code})",
                            http_status=resp.status_code)
