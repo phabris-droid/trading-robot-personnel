@@ -174,3 +174,16 @@ def test_ipv6_attackers_are_limited_per_64_block_and_memory_never_resets_all(cli
         TestClient(app, client=(f"93.184.216.{i + 1}", 4444)).get("/", auth=("admin", "x"))
     assert len(dashboard._auth.failures) == 3
     assert "93.184.216.5" in dashboard._auth.failures             # les plus récentes restent
+
+
+def test_capital_curve_never_shows_a_fake_gain_while_a_platform_is_missing():
+    """Vu sur le tableau de bord le 23 nov. : 1er point = Binance seul (5 000), puis
+    Binance + Capital.com (6 000) -> « +20 % » affiché alors que rien n'avait bougé."""
+    class J:
+        def equity_points(self, since):
+            return [{"ts": 10, "platform": "binance", "value": 5000.0},
+                    {"ts": 11, "platform": "capital", "value": 1000.0},
+                    {"ts": 70, "platform": "binance", "value": 4999.0}]
+
+    points = dashboard._curve(J(), 100)
+    assert [p["value"] for p in points] == [6000.0, 5999.0]

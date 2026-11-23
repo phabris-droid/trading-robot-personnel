@@ -221,11 +221,16 @@ def _curve(journal, now: float) -> list[dict]:
     réduite à CURVE_POINTS points."""
     if journal is None:
         return []
+    raw = journal.equity_points(now - 7 * 86_400)
+    platforms = {p["platform"] for p in raw}
     last: dict[str, float] = {}
     points = []
-    for p in journal.equity_points(now - 7 * 86_400):
+    for p in raw:
         last[p["platform"]] = p["value"]
-        points.append({"ts": p["ts"], "value": round(sum(last.values()), 2)})
+        # 23 nov. : tant qu'une plateforme n'a pas encore de valeur, le total est incomplet
+        # (5 000 puis 6 000 affichait un faux gain de +20 %) : point non tracé
+        if set(last) == platforms:
+            points.append({"ts": p["ts"], "value": round(sum(last.values()), 2)})
     step = max(1, len(points) // CURVE_POINTS)
     return points[::step][-CURVE_POINTS:]
 
