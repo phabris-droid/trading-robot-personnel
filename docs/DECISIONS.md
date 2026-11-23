@@ -15,3 +15,4 @@ corrections C1/C2 (A2, A3, A4) ont été confirmées une seconde fois le 2026-11
 | A9 | Calendrier : flux JSON public hebdomadaire, 2 Mo / 20 s, en cache | `analysts/news_watch.py` | `test_analysts.py` |
 | A10 | Compte Capital.com hors USD : alerte, marchés Capital.com en pause en mode réel | `engine.py` `_check_account_currency` | `test_engine_integration.py::test_capital_account_not_in_usd_…` |
 | A11 | Risque ouvert > 5 % = somme (distance au stop × taille) / capital de la plateforme | `analysts/risk_analyst.py` | `test_analysts.py` |
+| D1 | Arrêt de sécurité à **10 %** de baisse depuis le plus haut (au lieu de 15 %), toujours par plateforme (A3) — décision du 23 nov. | `config/config.yaml` `risk.max_drawdown_pct` | `test_config.py::test_owner_decision_safety_stop_at_10_pct_drawdown`, `test_breakers.py::test_drawdown_triggers_…` |

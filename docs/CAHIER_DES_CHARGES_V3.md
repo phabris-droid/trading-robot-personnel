@@ -134,7 +134,7 @@ Capital.com (sans commission) restent à valider avec les clés démo.
 | Déclencheur | Seuil | Action |
 |---|---|---|
 | Perte du jour | 3 % | pause des entrées jusqu'au lendemain (UTC) |
-| Baisse depuis le plus haut | 15 % | arrêt de sécurité : tout est fermé, redémarrage manuel |
+| Baisse depuis le plus haut | **[V3] 10 %** (15 % en V2, décision du 23 nov.) | arrêt de sécurité : tout est fermé, redémarrage manuel |
 | Positions ouvertes | 4 toutes plateformes, 2 forex or compris (A4) | entrée refusée |
 | Trades par jour | 10 ouvertures, jour UTC (A8) | entrée refusée |
 
@@ -419,7 +419,7 @@ automatique des stratégies.
 
 | Risque | Parade |
 |---|---|
-| Perte en capital | 1 % par trade, disjoncteurs 3 % / 15 %, garde-fou de rentabilité, 100 $ au départ |
+| Perte en capital | 1 % par trade, disjoncteurs 3 % / 10 %, garde-fou de rentabilité, 100 $ au départ |
 | Événement politique brutal | veille géopolitique (blocage 4 h), stops chez la plateforme |
 | Panne du serveur | stops chez la plateforme, redémarrage automatique, Healthchecks.io |
 | Vol des clés API | retraits interdits, clé restreinte à l'IP, serveur durci, déploiement par commande forcée ; en cas de doute, révoquer les clés |
@@ -443,6 +443,7 @@ automatique des stratégies.
 | A9 | Calendrier : flux JSON public | 6 nov. |
 | A10 | Compte hors USD : conversion, sinon pause en réel | 6 nov., complété le 18 nov. |
 | A11 | Risque ouvert > 5 % par plateforme | 6 nov. |
+| D1 | Arrêt de sécurité à 10 % de baisse (au lieu de 15 %), par plateforme | 23 nov. |
 | S1 | Anti-force-brute par adresse IP | 9 nov. |
 | S5 | Déploiement par commande forcée | 9 nov. |
 | S6 | Sauvegardes : clé publique + copie externe | 9 nov. |

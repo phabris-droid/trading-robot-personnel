@@ -3,7 +3,7 @@
 Par plateforme (A3) :
 - perte du jour >= 3 % (depuis le capital de 00:00 UTC) : pause des entrées, reprise
   automatique le lendemain UTC ;
-- baisse depuis le plus haut >= 15 % : ARRÊT DE SÉCURITÉ — fermeture de tout sur la
+- baisse depuis le plus haut >= max_drawdown_pct (10 %) : ARRÊT DE SÉCURITÉ — fermeture de tout sur la
   plateforme, nouvelles entrées interdites, redémarrage MANUEL ; l'état est persistant
   (journal) et survit à un redémarrage du robot.
 Toutes plateformes :

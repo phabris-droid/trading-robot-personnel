@@ -205,3 +205,11 @@ def test_live_mode_confirmation_can_come_from_env_file(tmp_path, monkeypatch):
                                    encoding="utf-8")
     p = _write(tmp_path, lambda r: r.update(mode="live"))
     assert load_settings(p).mode == "live"
+
+
+def test_owner_decision_safety_stop_at_10_pct_drawdown():
+    """Décision du propriétaire (23 nov.) : arrêt de sécurité à 10 % de baisse depuis le plus
+    haut (au lieu de 15 %), toujours par plateforme (A3)."""
+    from tradebot.settings import load_settings
+
+    assert load_settings(env={}).risk.max_drawdown_pct == 10.0

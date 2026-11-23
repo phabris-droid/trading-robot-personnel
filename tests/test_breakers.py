@@ -47,16 +47,16 @@ def test_breakers_are_per_platform(br):
     assert br.can_enter("capital", [], 0) is None         # A3 : l'autre plateforme continue
 
 
-# --- baisse depuis le plus haut (15 %) : arrêt de sécurité persistant ------------------------
+# --- baisse depuis le plus haut (10 %) : arrêt de sécurité persistant ------------------------
 
 def test_drawdown_triggers_persistent_safety_stop(tmp_path, clock):
     journal = Journal(tmp_path / "tradebot_demo.db", "demo")
     br = Breakers(RISK, journal, clock=lambda: clock["now"])
     br.update_equity("capital", 100.0)
-    for day, equity in enumerate([110.0, 104.0, 99.0, 94.0, 93.0]):  # pertes < 3 %/jour
+    for day, equity in enumerate([110.0, 107.0, 104.0, 101.0, 99.0]):  # pertes < 3 %/jour
         clock["now"] = T0 + (day + 1) * 86_400
         events = br.update_equity("capital", equity)
-    assert "arret_securite" in events                    # 93 <= 110 × 0,85
+    assert "arret_securite" in events                    # 99 <= 110 × 0,90 (seuil 10 %)
     assert "arrêt de sécurité" in br.can_enter("capital", [], 0)
     # redémarrage du robot : l'arrêt de sécurité est toujours là (redémarrage manuel)
     restarted = Breakers(RISK, journal, clock=lambda: clock["now"])

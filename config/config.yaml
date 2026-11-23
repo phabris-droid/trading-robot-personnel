@@ -55,7 +55,7 @@ risk:
   small_account_max_risk_pct: 3.0
   max_spread_to_stop: 0.25
   daily_loss_pct: 3.0
-  max_drawdown_pct: 15.0           # bornes 1 – 50
+  max_drawdown_pct: 10.0           # bornes 1 – 50 ; 15 → 10 % (propriétaire, 23 nov.)
   max_open_positions: 4
   max_forex_positions: 2
   max_trades_per_day: 10
@@ -117,7 +117,7 @@ analysts:
     loss_streak_total: 5
     loss_streak_total_pause_h: 12
     min_equity: 50                 # CDC §5 (analyste des risques). Recoupe en partie le
-                                   # drawdown 15 % des disjoncteurs : garde séparée, conservée
+                                   # drawdown 10 % des disjoncteurs : garde séparée, conservée
     max_equity_drop_24h_pct: 5.0
     forex_weekend_start_utc: "fri 20:00"   # forex fermé du vendredi 20 h…
     forex_weekend_end_utc: "sun 22:15"     # …au dimanche 22 h 15 UTC (or compris, A4)
