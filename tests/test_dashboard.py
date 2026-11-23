@@ -187,3 +187,13 @@ def test_capital_curve_never_shows_a_fake_gain_while_a_platform_is_missing():
 
     points = dashboard._curve(J(), 100)
     assert [p["value"] for p in points] == [6000.0, 5999.0]
+
+
+def test_capital_curve_ends_with_the_live_capital():
+    """23 nov. : la courbe réagit à chaque rafraîchissement (point en direct ajouté), sans
+    rien écrire dans le journal."""
+    points = [{"ts": 10, "value": 6000.0}]
+    live = dashboard._live_curve(points, {"binance": 4990.0, "capital": 1003.5}, 400)
+    assert live == [{"ts": 10, "value": 6000.0}, {"ts": 400, "value": 5993.5}]
+    assert points == [{"ts": 10, "value": 6000.0}]                # journal inchangé
+    assert dashboard._live_curve([], {"binance": 1.0}, 400) == []   # pas de courbe incomplète

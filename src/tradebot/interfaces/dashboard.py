@@ -235,6 +235,15 @@ def _curve(journal, now: float) -> list[dict]:
     return points[::step][-CURVE_POINTS:]
 
 
+def _live_curve(points: list[dict], equity: dict, now: float) -> list[dict]:
+    """23 nov. (demande du propriétaire) : la courbe suit le capital EN DIRECT — dernier point =
+    capital confirmé du moment, toutes plateformes. Rien n'est enregistré : le journal garde
+    un point toutes les equity_save_minutes (A7)."""
+    if not points or not equity:
+        return points
+    return points + [{"ts": now, "value": round(sum(equity.values()), 2)}]
+
+
 @app.get("/api/state")
 def state(_user: str = Depends(require_auth)) -> dict:
     from tradebot.interfaces.reports import pnl_summary
@@ -247,7 +256,7 @@ def state(_user: str = Depends(require_auth)) -> dict:
         "dernier_cycle": e.last_cycle_ts,
         "capital": {k: round(v, 2) for k, v in e.equity.items()},
         "capital_total": round(sum(e.equity.values()), 2),
-        "courbe": _curve(journal, now),
+        "courbe": _live_curve(_curve(journal, now), e.equity, now),
         "positions": [{k: r.get(k) for k in ("market", "side", "qty", "entry", "stop", "target",
                                               "platform")} for r in e.open_positions()],
         "trades": journal.recent_trades(50) if journal else [],
