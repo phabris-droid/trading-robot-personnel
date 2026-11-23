@@ -1152,3 +1152,24 @@ def test_trailing_stop_never_applies_to_mean_reversion(tmp_path):
     b.price = 105.0
     eng._trail(journal.open_positions()[0], b)
     assert b.updates == []
+
+
+def test_news_source_alert_only_after_two_missed_refreshes(tmp_path):
+    """23 nov. : un échec isolé d'une source d'actualité n'alerte plus (connexion instable) ;
+    l'alerte part si la source manque 2 rafraîchissements de suite."""
+    alerts = []
+    eng = Engine(SETTINGS, Journal(tmp_path / "tradebot_demo.db", "demo"), connectors={},
+                 alert=lambda lvl, msg: alerts.append(msg), clock=lambda: 1e9)
+
+    class News:
+        errors = {"https://a.example/rss": "ConnectError: panne"}
+        failures = {"https://a.example/rss": 1}
+
+        def refresh(self, background=False):
+            return None
+    eng.news = News()
+    eng._refresh_news()
+    assert not [m for m in alerts if "a.example" in m]
+    eng.news.failures = {"https://a.example/rss": 2}
+    eng._refresh_news()
+    assert [m for m in alerts if "a.example" in m and "indisponible" in m]

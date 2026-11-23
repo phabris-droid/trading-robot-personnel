@@ -33,6 +33,7 @@ from typing import Any
 
 from tradebot.brokers.base import PositionInconsistent
 from tradebot.analysts.base import AdvisorContext, run_chain
+from tradebot.analysts.news_watch import ALERT_AFTER_FAILURES
 from tradebot.execution.orders import open_trade, record_position, resolve_uncertain
 from tradebot.execution.reconciliation import reconcile
 from tradebot.journal import EVENT_LEVELS, Journal, JournalUnavailable
@@ -831,7 +832,12 @@ class Engine:
         except Exception as exc:  # noqa: BLE001
             self.alert("warning", f"veille indisponible : {exc}", key="veille")
             return
+        failures = getattr(self.news, "failures", {})
         for source, err in self.news.errors.items():
+            # 23 nov. : un échec isolé (connexion instable) n'alerte plus ; la source garde
+            # ses dernières nouvelles. Alerte si elle manque ALERT_AFTER_FAILURES fois de suite
+            if failures.get(source, ALERT_AFTER_FAILURES) < ALERT_AFTER_FAILURES:
+                continue
             self.alert("warning", f"veille : source {source} indisponible ({err}), les autres "
                                   "contrôles s'appliquent", key=f"veille:{source}")
 

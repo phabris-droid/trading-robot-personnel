@@ -108,6 +108,11 @@ def fetch_limited(client: httpx.Client, url: str, max_bytes: int, timeout_s: flo
 
 MAX_REDIRECTS = 3
 STALE_REFRESHES = 3              # S3 : calendrier périmé après 3 rafraîchissements manqués
+# 23 nov. : sur une connexion instable, environ 1 téléchargement sur 20 échoue au hasard
+# (connexion refusée ou très lente) puis passe au tour suivant : un nouvel essai par source,
+# et une alerte seulement après ALERT_AFTER_FAILURES rafraîchissements manqués d'affilée
+FEED_RETRY_PAUSE_S = 2.0
+ALERT_AFTER_FAILURES = 2
 
 
 def _check_public_https(url: str) -> None:
@@ -166,7 +171,8 @@ class NewsCache:
     en cas de panne d'une source."""
 
     def __init__(self, cfg, client: httpx.Client | None = None,
-                 clock: Callable[[], float] = time.time, ai=None, geo=None):
+                 clock: Callable[[], float] = time.time, ai=None, geo=None,
+                 sleep: Callable[[float], None] = time.sleep):
         self.cfg = cfg
         self.geo_cfg = geo                 # veille géopolitique (GeoCfg) ou None
         self.geo: dict[str, list[NewsItem]] = {}
@@ -177,6 +183,8 @@ class NewsCache:
         self.news: dict[str, list[NewsItem]] = {}
         self.events: list[CalendarEvent] = []
         self.errors: dict[str, str] = {}
+        self.failures: dict[str, int] = {}     # rafraîchissements manqués d'affilée par source
+        self._sleep = sleep
         self._last_refresh = float("-inf")
         self._worker: threading.Thread | None = None
         # S3 : dernière lecture réussie du calendrier ; trop ancienne (source en panne, fil de
@@ -198,6 +206,18 @@ class NewsCache:
         else:
             self._fetch_all()
 
+    def _fetch(self, url: str) -> bytes:
+        """Téléchargement plafonné (fetch_limited) avec UN nouvel essai si le réseau flanche
+        (connexion refusée, coupée ou trop lente). Jamais de nouvel essai sur un refus du site
+        (HTTP 4xx) ni sur un flux suspect (trop gros, compressé, redirection interdite)."""
+        try:
+            return fetch_limited(self._http, url, self.cfg.feed_max_bytes,
+                                 self.cfg.feed_timeout_s)
+        except (httpx.TransportError, TimeoutError):
+            self._sleep(FEED_RETRY_PAUSE_S)
+            return fetch_limited(self._http, url, self.cfg.feed_max_bytes,
+                                 self.cfg.feed_timeout_s)
+
     def _fetch_all(self) -> None:
         """Prépare de nouvelles copies puis les remplace d'un coup : le moteur ne lit jamais
         des données à moitié mises à jour."""
@@ -206,15 +226,13 @@ class NewsCache:
         events = self.events
         for url in self.cfg.feeds:
             try:
-                raw = fetch_limited(self._http, url, self.cfg.feed_max_bytes,
-                                    self.cfg.feed_timeout_s)
+                raw = self._fetch(url)
                 news[url] = parse_feed(raw, url, self.cfg.high_impact_keywords)
                 errors.pop(url, None)
             except Exception as exc:  # noqa: BLE001
                 errors[url] = f"{type(exc).__name__}: {exc}"
         try:
-            raw = fetch_limited(self._http, self.cfg.calendar_url, self.cfg.feed_max_bytes,
-                                self.cfg.feed_timeout_s)
+            raw = self._fetch(self.cfg.calendar_url)
             events = parse_calendar(raw)
             errors.pop("calendrier", None)
             self.calendar_ok_ts = self._clock()
@@ -226,8 +244,7 @@ class NewsCache:
             ok = False
             for url in feeds:
                 try:
-                    raw = fetch_limited(self._http, url, self.cfg.feed_max_bytes,
-                                        self.cfg.feed_timeout_s)
+                    raw = self._fetch(url)
                     geo[url] = parse_feed(raw, url, list(self.geo_cfg.keywords))
                     errors.pop(url, None)
                     ok = True
@@ -238,6 +255,8 @@ class NewsCache:
         self.geo = geo
         if self.ai is not None:
             news = self._raise_impacts(news)
+        # sources en échec à ce tour : compteur d'échecs d'affilée (remis à zéro au succès)
+        self.failures = {k: self.failures.get(k, 0) + 1 for k in errors}
         self.news, self.events, self.errors = news, events, errors
 
     def geo_stale_for(self, now: float) -> float:

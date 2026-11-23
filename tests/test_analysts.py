@@ -268,7 +268,7 @@ def test_failing_source_keeps_last_data_and_others_still_load():
         m.get("https://a.example/rss").respond(content=RSS)
         m.get("https://b.example/rss").mock(side_effect=httpx.ConnectError("panne"))
         m.get("https://c.example/cal.json").respond(content=b"[]")
-        cache = NewsCache(cfg, client=httpx.Client(), clock=lambda: T0)
+        cache = NewsCache(cfg, client=httpx.Client(), clock=lambda: T0, sleep=lambda s: None)
         cache.refresh(force=True)
     assert len(cache.news["https://a.example/rss"]) == 2
     assert "https://b.example/rss" in cache.errors and "calendrier" not in cache.errors
@@ -610,3 +610,34 @@ def test_feeds_are_fetched_with_a_generic_user_agent():
         fetch_limited(httpx.Client(), "https://flux.example/rss", 1024, 20)
     ua = route.calls.last.request.headers["user-agent"]
     assert ua.startswith("Mozilla/5.0 (compatible; tradebot-veille") and "@" not in ua
+
+
+def test_a_feed_failing_once_is_retried_and_never_reported():
+    """23 nov. : sur une connexion instable, ~1 téléchargement sur 20 échoue au hasard
+    (connexion refusée après 18 s) puis passe : un nouvel essai, aucune erreur gardée."""
+    cfg = A.news_watch.model_copy(update={"feeds": ["https://a.example/rss"],
+                                          "calendar_url": "https://c.example/cal.json"})
+    pauses = []
+    with respx.mock() as m:
+        route = m.get("https://a.example/rss").mock(
+            side_effect=[httpx.ConnectError("WinError 10061"), httpx.Response(200, content=RSS)])
+        m.get("https://c.example/cal.json").respond(content=b"[]")
+        cache = NewsCache(cfg, client=httpx.Client(), clock=lambda: T0, sleep=pauses.append)
+        cache.refresh(force=True)
+    assert route.call_count == 2 and pauses == [2.0]
+    assert cache.errors == {} and cache.failures == {}
+    assert len(cache.news["https://a.example/rss"]) == 2
+
+
+def test_a_feed_refused_by_the_site_is_never_retried():
+    """HTTP 403 (site qui refuse) : pas de nouvel essai, erreur notée, échecs comptés."""
+    cfg = A.news_watch.model_copy(update={"feeds": ["https://a.example/rss"],
+                                          "calendar_url": "https://c.example/cal.json"})
+    with respx.mock() as m:
+        route = m.get("https://a.example/rss").respond(403)
+        m.get("https://c.example/cal.json").respond(content=b"[]")
+        cache = NewsCache(cfg, client=httpx.Client(), clock=lambda: T0, sleep=lambda s: None)
+        cache.refresh(force=True)
+        assert route.call_count == 1 and cache.failures == {"https://a.example/rss": 1}
+        cache.refresh(force=True)
+    assert cache.failures == {"https://a.example/rss": 2}
